@@ -75,10 +75,20 @@ def prepare_save(features, dataset, TRAINSPLIT, VALSPLIT, TESTSPLIT):
         
         # get the video ID and the features out of the aligned dataset
         vid = re.search(pattern, segment).group(1)
-        label = dataset[labelField][segment]['features']
-        _words = dataset[textField][segment]['features']
-        _visual = dataset[visualField][segment]['features']
-        _speech = dataset[speechField][segment]['features']
+        try:
+            label = dataset[labelField][segment]
+            _words = dataset[textField][segment]
+            _visual = dataset[visualField][segment]
+            _speech = dataset[speechField][segment]
+        except:
+            print(f"[Segment]Found video that doesn't belong to any splits: {segment}")
+            num_drop +=1
+            continue
+            
+        label = label['features']
+        _words = _words['features']
+        _visual = _visual['features']
+        _speech = _speech['features']
 
         # if the sequences are not same length after alignment, there must be some problem with some modalities
         # we should drop it or inspect the data again
@@ -119,7 +129,7 @@ def prepare_save(features, dataset, TRAINSPLIT, VALSPLIT, TESTSPLIT):
         elif vid in TESTSPLIT:
             test.append(((words, visual, speech), label, segment))
         else:
-            print(f"Found video that doesn't belong to any splits: {vid}")
+            print(f"[Videosplit]Found video that doesn't belong to any splits: {vid}")
 
     print(f"Total number of {num_drop} datapoints have been dropped.")
 

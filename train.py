@@ -10,16 +10,18 @@ from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm, trange
 
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
-from transformers.modeling_bert import BertModel
+from transformers.configuration_bert import BertConfig
+#from transformers.modeling_bert import BertModel
 from transformers.optimization import AdamW
 
 from MMBertDataset import MMBertDataset
+#To modify model name MMBertForPretraining -> MMBertForPreTraining
 from MMBertForPretraining import MMBertForPretraining
 from config import DEVICE
 
-args= argparse.ArgumentParser()
-parser.add_argument("--dataset",type=str,choices=["mosi","mosei"],default='mosi')
-parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large=uncased"],default="bert-base-uncased")
+parser= argparse.ArgumentParser()
+parser.add_argument("--dataset",type=str,choices=["mosi","mosei"],default='mosei')
+parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-base-uncased")
 parser.add_argument("--learning_rate",type=float,default=1e-5)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=50)
@@ -40,7 +42,7 @@ def prepareForTraining(numTrainOptimizationSteps):
     optimizer_grouped_parameters = [
         {
             "params" : [
-                p for n, p in param_optimizer if not and(nd in n for nd in no_decay)
+                p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
             ],
             "weight_decay": 0.01,
         },
@@ -83,8 +85,9 @@ def convertTofeatures(samples,tokenizer):
         visual = np.array(newVisual)
         speech = np.array(newSpeech)
         
+        #To add np.str_ and str gets error <U10,<U10, ....
         features.append(
-            ((words,visual,speech),
+            ((list(words),visual,speech),
             label,
             segment)
         )
@@ -102,18 +105,19 @@ def get_tokenizer(model):
 
 def makeDataset(data):
     tokenizer = get_tokenizer(args.model)
-    
     features = convertTofeatures(data,tokenizer)
 
-    config = BertModel.from_pretrained(args.model).config
-    
+    ##Because of segmentation fault
+    config =BertConfig()
+
     #Need to modify
     dataset = MMBertDataset(tokenizer,features,config)
     
     return dataset, tokenizer
 
 def loadDataset():
-    with open("cmu_{}.pkl".format(args.dataset)) as fr:
+    #If you don't save pkl to byte form, then you may change read mode.
+    with open("cmu_{}.pkl".format(args.dataset),'br') as fr:
         data = pickle.load(fr)
         
     trainData = data["train"]
@@ -121,59 +125,16 @@ def loadDataset():
     testData = data["test"]
     
     trainDataset, tokenizer = makeDataset(trainData)
+    print("Finish Train makeDataset")
     valDataset, _ = makeDataset(valData)
+    print("Finish val makeDataset")
     testDataset, _ = makeDataset(testData)
-    
-    numTrainOptimizationSteps = (int(len(trianDataset)/ args.train_batch_size / args.gradient_accumulation_step)) *args.n_epochs
+    print("Finish test makeDataset")
+
+    numTrainOptimizationSteps = (int(len(trainData)/ args.train_batch_size / args.gradient_accumulation_step)) *args.n_epochs
     
     return (trainDataset,valDataset,testDataset,numTrainOptimizationSteps,tokenizer)
 
-def pad_example(examples,padding_value=tokenizer.pad_token_id):
-        if tokenizer._pad_token is None:
-            return pad_sequence(examples,batch_first=True)
-        return pad_sequence(examples,batch_first=True, padding_value=padding_value)
-
-def collate(examples):
-    text_examples = [None]*len(examples)
-    text_label = [None]*len(examples)
-    text_type_ids = [None]*len(examples)
-
-    visual_examples = [None]*len(examples)
-    visual_label = [None]*len(examples)
-    visual_type_ids = [None]*len(examples)
-
-    speech_examples = [None]*len(examples)
-    speech_label = [None]*len(examples)
-    speech_type_ids = [None]*len(examples)
-
-    for i, (te,tl,tti,ve,vl,vti,se,sl,sti) in enumerate(examples):
-        text_examples[i] = te
-        visual_examples[i] = ve
-        speech_examples[i] = se
-
-        text_label[i] = tl
-        visual_label[i] = vl
-        speech_label[i] = sl
-
-        text_type_ids[i] = tti
-        visual_type_ids[i] = vti
-        speech_type_ids[i] = sti
-
-    padded_text_ids = pad_example(text_examples)
-    text_attention_mask = torch.ones(padded_text_ids.shape,dtype=torch.int64)
-    text_attention_mask[(padded_text_ids == 0)] = 0
-
-    padded_visual_ids = pad_example(visual_examples)
-    visual_attention_mask = torch.ones(padded_visual_ids.shape,dtype=torch.int64)
-    visual_attention_mask[(padded_visual_ids == 0)] = 0
-
-    padded_speech_ids = pad_example(speech_examples)
-    speech_attention_mask = torch.ones(padded_speech_ids.shape,dtype=torch.int64)
-    speech_attention_mask[(padded_speech_ids == 0)] = 0
-
-    return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask,
-    padded_visual_ids, torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0),visual_attention_mask,
-    padded_speech_ids, torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0),speech_attention_mask
 
 def mask_tokens(inputs, tokenizer,args):
 
@@ -209,11 +170,58 @@ def mask_tokens(inputs, tokenizer,args):
     return inputs,lables
 
 def train_epoch(model,traindata,optimizr,scheduler,tokenizer):
+
+    def pad_example(examples,padding_value=tokenizer.pad_token_id):
+        if tokenizer._pad_token is None:
+            return pad_sequence(examples,batch_first=True)
+        return pad_sequence(examples,batch_first=True, padding_value=padding_value)
+
+    def collate(examples):
+        text_examples = [None]*len(examples)
+        text_label = [None]*len(examples)
+        text_type_ids = [None]*len(examples)
+
+        visual_examples = [None]*len(examples)
+        visual_label = [None]*len(examples)
+        visual_type_ids = [None]*len(examples)
+
+        speech_examples = [None]*len(examples)
+        speech_label = [None]*len(examples)
+        speech_type_ids = [None]*len(examples)
+
+        for i, (te,tl,tti,ve,vl,vti,se,sl,sti) in enumerate(examples):
+            text_examples[i] = te
+            visual_examples[i] = ve
+            speech_examples[i] = se
+
+            text_label[i] = tl
+            visual_label[i] = vl
+            speech_label[i] = sl
+
+            text_type_ids[i] = tti
+            visual_type_ids[i] = vti
+            speech_type_ids[i] = sti
+
+        padded_text_ids = pad_example(text_examples)
+        text_attention_mask = torch.ones(padded_text_ids.shape,dtype=torch.int64)
+        text_attention_mask[(padded_text_ids == 0)] = 0
+
+        padded_visual_ids = pad_example(visual_examples)
+        visual_attention_mask = torch.ones(padded_visual_ids.shape,dtype=torch.int64)
+        visual_attention_mask[(padded_visual_ids == 0)] = 0
+
+        padded_speech_ids = pad_example(speech_examples)
+        speech_attention_mask = torch.ones(padded_speech_ids.shape,dtype=torch.int64)
+        speech_attention_mask[(padded_speech_ids == 0)] = 0
+
+        return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask,\
+        padded_visual_ids, torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0),visual_attention_mask,\
+        padded_speech_ids, torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0),speech_attention_mask
+
     trainSampler = RandomSampler(traindata)
     trainDataloader = DataLoader(
         traindata, sampler=trainSampler, batch_size=args.train_batch_size, collate_fn=collate
     )
-
     #Train
     epochs_trained = 0
     train_loss = 0.0
@@ -303,7 +311,7 @@ def main():
         tokenizer
     ) = loadDataset()
     
-    model, opimizer, scheduler = prepareForTraining(numTrainOptimizationSteps)
+    model, optimizer, scheduler = prepareForTraining(numTrainOptimizationSteps)
     
     train(model, trainDataset, valDataset, testDataset, optimizer, scheduler,tokenizer)
 

@@ -170,4 +170,7 @@ dmypy.json
 ### data folder ###
 /data
 
+### preprocessing data ###
+*.pkl
+
 # End of https://www.toptal.com/developers/gitignore/api/python,linux,visualstudiocode

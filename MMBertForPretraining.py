@@ -2,6 +2,8 @@ from transformers import BertForPreTraining, BertModel
 from transformers.modeling_bert import BertPreTrainingHeads
 import torch
 
+from torch import nn
+
 class MMBertPreTrainingHeads(BertPreTrainingHeads):
     def __init__(self,config):
         super().__init__(config)
@@ -19,11 +21,12 @@ class MMBertPreTrainingHeads(BertPreTrainingHeads):
             seqRelationScore = self.seq_relationship(pooled_output)
             return predictionScores,seqRelationScore
 
-class MMBertForPreTraining(BertForPreTraining):
+class MMBertForPretraining(BertForPreTraining):
     def __init__(self,config):
         super().__init__(config)
         self.cls = MMBertPreTrainingHeads(config)
-        self.bert = MMBertModel(config)
+        #self.bert = MMBertModel(config)
+        self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size,config.num_labels)
         
@@ -46,7 +49,7 @@ class MMBertForPreTraining(BertForPreTraining):
                 text_token_type_ids = None, visual_token_type_ids = None, speech_token_type_ids = None,
                 text_attention_maks = None, visual_attention_mask = None, speech_attention_mask = None,
                 text_masked_lm_labels = None, visual_masked_lm_labels = None, speech_masked_lm_labels = None,
-                text_next_sentence_label = None, visual_next_sentence_label = None, speech_masked_lm_labels = None
+                text_next_sentence_label = None, visual_next_sentence_label = None, speech_next_sentence_label = None
                ):
         outputs = ()
         text_loss = None

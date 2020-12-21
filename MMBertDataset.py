@@ -12,6 +12,7 @@ class MMBertDataset(Dataset):
         self.tokenizer = tokenizer
         self.items = features
         self.embeddings = BertEmbeddings(config)
+        self.total_item = self.count()
 
     def tokenToEmbedding(input_ids, position_ids=None, token_type_ids=None, inputs_embeds=None):
         embedding_output = self.embeddings(
@@ -76,7 +77,7 @@ class MMBertDataset(Dataset):
         pairTokenTypeIds = np.ones(len(pairSentence) + 1)
 
         CLS = self.tokenizer.cls_token
-        SEP = self.tokenizer.sep_toekn
+        SEP = self.tokenizer.sep_token
         tokens = [CLS] + textSentence + [SEP]
         textSentence = self.tokenizer.convert_tokens_to_ids(tokens)
 
@@ -128,20 +129,21 @@ class MMBertDataset(Dataset):
         secondTokenTypeIds =  np.ones(len(secondSentence)+1)
 
         CLS = self.tokenizer.cls_token
-        SEP = self.tokenizer.sep_toekn
+        SEP = self.tokenizer.sep_token
 
         tokens = [CLS]+firstSentence+[SEP]+secondSentence+[SEP]
         
-        jointSentences = self.tokenizer.convert_tokens_to_ids(tokens)
+        jointSentences = torch.tensor(self.tokenizer.convert_tokens_to_ids(tokens),dtype=torch.long).unsqueeze(-1)
 
-        embedding_output = self.embeddings(jointSentences,token_type_ids=(firstTokenTypeIds+secondTokenTypeIds))
-        
-        
-        return torch.tensor(embedding_output), torch.tensor(label,dtype=torch.int64),
-        torch.cat(
-            torch.tensor(firstTokenTypeIds),
-            torch.tensor(secondTokenTypeIds)
-        )
+        embedding_output = self.embeddings(jointSentences,token_type_ids=torch.tensor(np.concatenate((firstTokenTypeIds,secondTokenTypeIds)),dtype=torch.long))
+
+        return torch.tensor(embedding_output), torch.tensor(label,dtype=torch.int64),torch.cat((torch.tensor(firstTokenTypeIds),torch.tensor(secondTokenTypeIds)))
+
+    def count(self):
+        return len(self.items)
+
+    def __len__(self):
+        return self.total_item
     
     def __getitem__(self,i):
         text_sentece, text_label, text_token_type_ids = self.create_next_sentence_pair(i,max_token_len = 75)
