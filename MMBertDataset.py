@@ -79,17 +79,29 @@ class MMBertDataset(Dataset):
         CLS = self.tokenizer.cls_token
         SEP = self.tokenizer.sep_token
         tokens = [CLS] + textSentence + [SEP]
-        textSentence = self.tokenizer.convert_tokens_to_ids(tokens)
+        textSentence = torch.tensor(self.tokenizer.convert_tokens_to_ids(tokens),dtype=torch.long).unsqueeze(-1)
 
-        embedding_output = self.embeddings(textSentence,token_type_ids=textTokenTypeIds)
+        embedding_output = self.embeddings(textSentence,token_type_ids=torch.tensor(textTokenTypeIds,dtype=torch.long))
+
+        print(torch.tensor(embedding_output).size())
+        print(len(pairSentence))
+        times = torch.tensor(pairSentence).size()[0]-1
+        pairSentence2 = torch.tensor(pairSentence).unsqueeze(0)
+        temp = pairSentence2
+        while times:
+            pairSentence2 = torch.cat((pairSentence2,temp),axis=0)
+            times-=1
+        print(pairSentence2.size())
+        print(torch.tensor([self.tokenizer.sep_token_id],dtype=torch.float))
+        print(torch.tensor([self.tokenizer.sep_token_id],dtype=torch.float).unsqueeze(-1).unsqueeze(0))
         
-        return torch.cat(
+        return torch.cat((
             torch.tensor(embedding_output),
-            torch.tensor(pairSentence),
-            torch.tensor(self.tokenizer.sep_token_id)
-        ),torch.tensor(label,dtype=torch.int64),torch.cat(
+            torch.tensor(pairSentence2),
+            torch.tensor([self.tokenizer.sep_token_id],dtype=torch.float).unsqueeze(-1).unsqueeze(0)),dim=-1
+        ),torch.tensor(label,dtype=torch.int64),torch.cat((
             torch.tensor(textTokenTypeIds),
-            torch.tensor(pairTokenTypeIds)
+            torch.tensor(pairTokenTypeIds))
         )
     
     def create_next_sentence_pair(self, i, max_token_len = -1):

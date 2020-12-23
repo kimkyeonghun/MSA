@@ -17,7 +17,7 @@ from transformers.optimization import AdamW
 from MMBertDataset import MMBertDataset
 #To modify model name MMBertForPretraining -> MMBertForPreTraining
 from MMBertForPretraining import MMBertForPretraining
-from config import DEVICE
+from config import DEVICE, VISUALDIM, SPEECHDIM
 
 parser= argparse.ArgumentParser()
 parser.add_argument("--dataset",type=str,choices=["mosi","mosei"],default='mosei')
@@ -28,7 +28,8 @@ parser.add_argument("--n_epochs",type=int,default=50)
 parser.add_argument("--train_batch_size",type=int,default=48)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
 parser.add_argument("--mlm",action="store_true")
-parser.add_argument("--mlm_probability",type=float,default=0.15)
+parser.add_argument("--mlm_probability",type=float,default = 0.15)
+parser.add_argument("--max_seq_length",type=int, default = 100)
 
 args = parser.parse_args()
 
@@ -62,6 +63,18 @@ def prepareForTraining(numTrainOptimizationSteps):
     
     return model, optimizer, scheduler
 
+def padding_tokens(tokens, visual, speech, tokenizer):
+    CLS = tokenizer.cls_token
+    SEP = tokenizer.sep_token
+    tokens = [CLS] + tokens + [CLS]
+
+    visual_sep = np.zeros((1,VISUALDIM))
+    visual = np.concatenate((visual,visual_sep))
+    speech_sep = np.zeros((1,SPEECHDIM))
+    speech = np.concatencate((speech,speech_sep))
+
+    input_ids = 
+
 
 def convertTofeatures(samples,tokenizer):
     features = []
@@ -85,9 +98,8 @@ def convertTofeatures(samples,tokenizer):
         visual = np.array(newVisual)
         speech = np.array(newSpeech)
         
-        #To add np.str_ and str gets error <U10,<U10, ....
         features.append(
-            ((list(words),visual,speech),
+            ((tokens,visual,speech),
             label,
             segment)
         )
