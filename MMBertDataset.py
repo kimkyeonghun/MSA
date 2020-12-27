@@ -6,6 +6,7 @@ import numpy as np
 
 from transformers.modeling_bert import BertEmbeddings
 
+cudas = torch.device('cuda')
 
 class MMBertDataset(Dataset):
     def __init__(self,tokenizer,features,config):
@@ -83,25 +84,17 @@ class MMBertDataset(Dataset):
 
         embedding_output = self.embeddings(textSentence,token_type_ids=torch.tensor(textTokenTypeIds,dtype=torch.long))
 
-        print(torch.tensor(embedding_output).size())
-        print(len(pairSentence))
         times = torch.tensor(pairSentence).size()[0]-1
         pairSentence2 = torch.tensor(pairSentence).unsqueeze(0)
         temp = pairSentence2
         while times:
             pairSentence2 = torch.cat((pairSentence2,temp),axis=0)
             times-=1
-        print(pairSentence2.size())
-        print(torch.tensor([self.tokenizer.sep_token_id],dtype=torch.float))
-        print(torch.tensor([self.tokenizer.sep_token_id],dtype=torch.float).unsqueeze(-1).unsqueeze(0))
-        
-        return torch.cat((
-            torch.tensor(embedding_output),
-            torch.tensor(pairSentence2),
-            torch.tensor([self.tokenizer.sep_token_id],dtype=torch.float).unsqueeze(-1).unsqueeze(0)),dim=-1
-        ),torch.tensor(label,dtype=torch.int64),torch.cat((
-            torch.tensor(textTokenTypeIds),
-            torch.tensor(pairTokenTypeIds))
+
+        return torch.cat((torch.tensor(embedding_output,dtype=torch.float,device=cudas),torch.tensor(pairSentence2,dtype=torch.float,device=cudas)),dim=-1),\
+        torch.tensor(label,dtype=torch.int64,device=cudas),torch.cat((
+            torch.tensor(textTokenTypeIds,device=cudas),
+            torch.tensor(pairTokenTypeIds,device=cudas))
         )
     
     def create_next_sentence_pair(self, i, max_token_len = -1):
@@ -140,16 +133,15 @@ class MMBertDataset(Dataset):
         firstTokenTypeIds =  np.zeros(len(firstSentence)+2)
         secondTokenTypeIds =  np.ones(len(secondSentence)+1)
 
-        CLS = self.tokenizer.cls_token
-        SEP = self.tokenizer.sep_token
+        CLS = self.tokenizer.cls_token_id
+        SEP = self.tokenizer.sep_token_id
 
-        tokens = [CLS]+firstSentence+[SEP]+secondSentence+[SEP]
-        
-        jointSentences = torch.tensor(self.tokenizer.convert_tokens_to_ids(tokens),dtype=torch.long).unsqueeze(-1)
+        jointSentences = torch.tensor([CLS]+firstSentence+[SEP]+secondSentence+[SEP],dtype= torch.long).unsqueeze(-1)
 
         embedding_output = self.embeddings(jointSentences,token_type_ids=torch.tensor(np.concatenate((firstTokenTypeIds,secondTokenTypeIds)),dtype=torch.long))
 
-        return torch.tensor(embedding_output), torch.tensor(label,dtype=torch.int64),torch.cat((torch.tensor(firstTokenTypeIds),torch.tensor(secondTokenTypeIds)))
+        return torch.tensor(embedding_output,device=cudas), torch.tensor(label,dtype=torch.int64,device=cudas),\
+        torch.cat((torch.tensor(firstTokenTypeIds,device=cudas),torch.tensor(secondTokenTypeIds,device=cudas)))
 
     def count(self):
         return len(self.items)

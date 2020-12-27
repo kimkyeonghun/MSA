@@ -25,11 +25,11 @@ parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-
 parser.add_argument("--learning_rate",type=float,default=1e-5)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=50)
-parser.add_argument("--train_batch_size",type=int,default=48)
+parser.add_argument("--train_batch_size",type=int,default=4)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
 parser.add_argument("--mlm",action="store_true")
 parser.add_argument("--mlm_probability",type=float,default = 0.15)
-parser.add_argument("--max_seq_length",type=int, default = 100)
+parser.add_argument("--max_seq_length",type=int, default = 200)
 
 args = parser.parse_args()
 
@@ -63,24 +63,66 @@ def prepareForTraining(numTrainOptimizationSteps):
     
     return model, optimizer, scheduler
 
-def padding_tokens(tokens, visual, speech, tokenizer):
-    CLS = tokenizer.cls_token
-    SEP = tokenizer.sep_token
-    tokens = [CLS] + tokens + [CLS]
+def prepare_inputs(tokens, visual, speech, tokenizer):
+    """
+        Input = tokens : List, visual : List, speech : List, tokenizer : BertTokenizer
+        
+        Convert token to token_id and make (token,visual,speech) length to max_seq_length using padding.
 
+        return input_ids : List, visual : List, speech : List, input_mask: List
+
+    """
     visual_sep = np.zeros((1,VISUALDIM))
-    visual = np.concatenate((visual,visual_sep))
+    visual = np.concatenate((visual_sep,visual,visual_sep))
     speech_sep = np.zeros((1,SPEECHDIM))
-    speech = np.concatencate((speech,speech_sep))
+    speech = np.concatenate((speech_sep,speech,speech_sep))
 
-    input_ids = 
+    input_ids = tokenizer.convert_tokens_to_ids(tokens)
+    #segment_id = [0] * len(input_ids)
+    input_mask = [1] * len(input_ids)
+
+    pad_length = args.max_seq_length - len(input_ids)
+
+    visual_padding = np.zeros((pad_length,VISUALDIM))
+    visual = np.concatenate((visual,visual_padding))
+
+    speech_padding = np.zeros((pad_length,SPEECHDIM))
+    speech = np.concatenate((speech,speech_padding))
+
+    padding = [0] * pad_length
+
+    input_ids += padding
+    #segment_id += padding
+    input_mask += padding
+
+    #deleted segment_id(I think this is not required.)
+    return input_ids, visual, speech, input_mask
 
 
 def convertTofeatures(samples,tokenizer):
+    """
+        Input = samples : [List], tokenizer(will...)
+            - samples[0] : (words,visual,speech),label, segment
+                    -- they are pair that aligned by text pivot.
+        
+        Using tokenizer, toknize words and appent tokens list. In this time, toknizer makes "##__ token" because of wordcepiece. So make inversion list too.
+
+        Using inversion list, make visual and speech length same sa tokens length.
+
+        They have too many tokens.Therefore, truncate about max_seq_length == 200.
+
+        In prepare_input, convert token to token_id and make (token,visual,speech) length to max_seq_length using padding.
+
+        we store those things at features: List
+        features - ((input_ids:token_ ids, visual, speech, input_mask), label, segment)
+
+        return features
+    """
     features = []
     for idx, sample in enumerate(samples):
         (words,visual,speech), label, segment = sample
         
+        #Tokenize
         tokens, inversions = [],[]
         for i, word in enumerate(list(words)):
             tokenized = tokenizer.tokenize(word)
@@ -90,6 +132,7 @@ def convertTofeatures(samples,tokenizer):
         
         assert len(tokens) == len(inversions)
         
+        #Make same length between token, visual, speech
         newVisual, newSpeech = [],[]
         for inv in inversions:
             newVisual.append(visual[inv,:])
@@ -97,15 +140,28 @@ def convertTofeatures(samples,tokenizer):
         
         visual = np.array(newVisual)
         speech = np.array(newSpeech)
+
+        #Truncate
+        if len(tokens) > args.max_seq_length-2:
+            tokens = tokens[: args.max_seq_length-2]
+            visual = visual[: args.max_seq_length-2]
+            speech = speech[: args.max_seq_length-2]
+
+        #padding
+        input_ids,visual,speech,input_mask = prepare_inputs(tokens,visual,speech,tokenizer)
         
         features.append(
-            ((tokens,visual,speech),
+            ((input_ids,visual,speech,input_mask),
             label,
             segment)
         )
     return features
 
 def get_tokenizer(model):
+    """
+    Load tokenizer
+    # Will be global variable
+    """
     if model == "bert-base-uncased":
         return BertTokenizer.from_pretrained(model)
     elif model == "bert-large-uncased":
@@ -116,6 +172,18 @@ def get_tokenizer(model):
             )
 
 def makeDataset(data):
+    """
+        Input : data [List]
+
+        Load tokenzier using args.model(bert-base-uncased or bert-large-uncased).If you want, you can change another.
+        With Input and tokenizer, we convert raw data to features using at training stage.
+
+        #I think this part is error, so i will change it.
+        After converting raw to feature, make dataset using torch.utils.data.dataset in MMBertDataset.py
+
+        #Future work : tokenizer will be global variable
+        Return : dataset, tokenizer
+    """
     tokenizer = get_tokenizer(args.model)
     features = convertTofeatures(data,tokenizer)
 
@@ -128,6 +196,19 @@ def makeDataset(data):
     return dataset, tokenizer
 
 def loadDataset():
+    """
+        load Data from pickle by producing at pre_processing.py
+
+        Data Strcuture
+        data    ----train = (word,visual,speech),label(sentimnet),segment(situation number)
+                |
+                ----val = (word,visual,speech),label(sentimnet),segment(situation number)
+                |
+                ----test = (word,visual,speech),label(sentimnet),segment(situation number)
+        
+        #Future work : tokenizer will be global variable
+        return (trainDataset : torch.utils.data.Dataset,valDataset : torch.utils.data.Dataset,testDataset : torch.utils.data.Dataset, numTrainOpimizationSteps,tokenizer)
+    """
     #If you don't save pkl to byte form, then you may change read mode.
     with open("cmu_{}.pkl".format(args.dataset),'br') as fr:
         data = pickle.load(fr)
@@ -143,6 +224,7 @@ def loadDataset():
     testDataset, _ = makeDataset(testData)
     print("Finish test makeDataset")
 
+    #maybe warmup start?
     numTrainOptimizationSteps = (int(len(trainData)/ args.train_batch_size / args.gradient_accumulation_step)) *args.n_epochs
     
     return (trainDataset,valDataset,testDataset,numTrainOptimizationSteps,tokenizer)
@@ -279,9 +361,9 @@ def train_epoch(model,traindata,optimizr,scheduler,tokenizer):
             text_attention_mask = text_attention_masks,
             visual_attention_mask = visual_attention_masks,
             speech_attention_mask = speech_attention_masks,
-            text_masked_lm_lables = text_mask_lables,
+            text_masked_lm_labels = text_mask_labels,
             visual_masked_lm_labels = visual_mask_labels,
-            speech_masked_lm_lables = speech_mask_labels,
+            speech_masked_lm_labels = speech_mask_labels,
             text_next_sentence_label = text_label,
             visual_next_sentence_label = visual_label,
             speech_next_sentence_label = speech_label,
@@ -303,10 +385,6 @@ def train_epoch(model,traindata,optimizr,scheduler,tokenizer):
             optimizer.zero_grad()
         
         return tr_loss / nb_tr_steps
-
-
-    
-    
 
 def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenizer):
     val_loss = []
