@@ -3,10 +3,11 @@ from transformers.modeling_bert import BertPreTrainingHeads,BertPreTrainedModel
 
 from transformers.modeling_bert import BertEmbeddings, BertEncoder, BertPooler
 
+from transformers.modeling_utils import ModuleUtilsMixin
+
 import torch
 
 from torch import nn
-
 
 
 class MMBertModel(BertPreTrainedModel):
@@ -28,6 +29,24 @@ class MMBertModel(BertPreTrainedModel):
     def _prune_heads(self,heads_to_prune):
         for layer, heads in heads_to_prune.items():
             self.encoder.layer[layer].attention.prune_heads(heads)
+
+    @property
+    def dtype(self):
+        """
+        :obj:`torch.dtype`: The dtype of the module (assuming that all the module parameters have the same dtype).
+        """
+        try:
+            return next(self.parameters()).dtype
+        except StopIteration:
+            # For nn.DataParallel compatibility in PyTorch 1.5
+
+            def find_tensor_attributes(module: nn.Module) -> List[Tuple[str, Tensor]]:
+                tuples = [(k, v) for k, v in module.__dict__.items() if torch.is_tensor(v)]
+                return tuples
+
+            gen = self._named_members(get_members_fn=find_tensor_attributes)
+            first_tuple = next(gen)
+            return first_tuple[1].dtype
 
     #From huggingface docu
     def get_extended_attention_mask(self, attention_mask, input_shape, device):
@@ -178,8 +197,8 @@ class MMBertModel(BertPreTrainedModel):
 
         #Maybe Error
         #make [batch, from, to, TextDim] -> [batch, from, to]
-        squeezed_attention_mask = attention_mask.squeeze(-1)
-        #extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(squeezed_attention_mask,input_shape,device)
+        #squeezed_attention_mask = attention_mask.squeeze(-1)
+        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask,input_shape,device)
 
         if self.config.is_decoder and encoder_hidden_states is not None:
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
@@ -194,7 +213,7 @@ class MMBertModel(BertPreTrainedModel):
 
         encoder_outputs =self.encoder(
             input_ids,
-            attention_mask = attention_mask,
+            attention_mask = extended_attention_mask,
             head_mask = head_mask,
             encoder_hidden_states = encoder_hidden_states,
             encoder_attention_mask = encoder_extended_attention_mask,
@@ -265,7 +284,7 @@ class MMBertForPretraining(BertForPreTraining):
         print("text_attention_mask",text_attention_mask[0])
         print("text_masked_lm_labels",text_masked_lm_labels[0])
         print("text_next_sentence_label",text_next_sentence_label[0])
-        assert 1==0
+
         if text_input_ids is not None:
             (text_prediction_scores, text_seq_relationship_score), text_pooled_output = self.get_bert_output(
                 input_ids = text_input_ids,

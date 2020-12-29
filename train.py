@@ -27,7 +27,7 @@ parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=50)
 parser.add_argument("--train_batch_size",type=int,default=4)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
-parser.add_argument("--mlm",action="store_true")
+parser.add_argument("--mlm",type=bool,default=False)
 parser.add_argument("--mlm_probability",type=float,default = 0.15)
 parser.add_argument("--max_seq_length",type=int, default = 200)
 
@@ -81,19 +81,19 @@ def prepare_inputs(tokens, visual, speech, tokenizer):
     #segment_id = [0] * len(input_ids)
     input_mask = [1] * len(input_ids)
 
-    pad_length = args.max_seq_length - len(input_ids)
+    #pad_length = args.max_seq_length - len(input_ids)
 
-    visual_padding = np.zeros((pad_length,VISUALDIM))
-    visual = np.concatenate((visual,visual_padding))
+    #visual_padding = np.zeros((pad_length,VISUALDIM))
+    # visual = np.concatenate((visual,visual_padding))
 
-    speech_padding = np.zeros((pad_length,SPEECHDIM))
-    speech = np.concatenate((speech,speech_padding))
+    # speech_padding = np.zeros((pad_length,SPEECHDIM))
+    # speech = np.concatenate((speech,speech_padding))
 
-    padding = [0] * pad_length
+    # padding = [0] * pad_length
 
-    input_ids += padding
+    # input_ids += padding
     #segment_id += padding
-    input_mask += padding
+    # input_mask += padding
 
     #deleted segment_id(I think this is not required.)
     return input_ids, visual, speech, input_mask
@@ -238,30 +238,31 @@ def mask_tokens(inputs, tokenizer,args):
         )
     
     labels = inputs.clone()
-    probability_matrix = torch.full(labels.shape,args.mlm_probability)
+    probability_matrix = torch.full(labels.shape,args.mlm_probability, device = DEVICE)
     special_tokens_mask =[
         tokenizer.get_special_tokens_mask(val,already_has_special_tokens=True) for val in labels.tolist()
     ]
 
-    #No glue token
-
-    probability_matrix.masked_fill_(torch.tensor(special_tokens_mask,dtype=torch.boll),values=0.0)
+    print(torch.tensor(special_tokens_mask,dtype=torch.bool).shape)
+    #Shape probelm
+    #RuntimeError: The expanded size of the tensor (35) must match the existing size (51) at non-singleton dimension 2.  Target sizes: [4, 51, 35].  Tensor sizes: [4, 51]
+    probability_matrix.masked_fill_(torch.tensor(special_tokens_mask,dtype=torch.bool,device=DEVICE),value=0.0)
     if tokenizer._pad_token is not None:
         padding_mask = labels.eq(tokenizer.pad_token_id)
         probability_matrix.masked_fill(padding_mask, value=0.0)
     masked_indices = torch.bernoulli(probability_matrix).bool()
     labels[~masked_indices] = -100
 
-    indices_replaced = torch.bernoulli(torch.full(labels.shape,0.8)).bool() & masked_indices
+    indices_replaced = torch.bernoulli(torch.full(labels.shape,0.8,device=DEVICE)).bool() & masked_indices
     #Check this line necessary
     inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
 
-    indices_random = torch.bernoulli(torch.full(labels.shape,0.5)).bool() & masked_indices & ~indices_replaced
+    indices_random = torch.bernoulli(torch.full(labels.shape,0.5,device=DEVICE)).bool() & masked_indices & ~indices_replaced
     #Must make total_vocab_size in globals
-    random_words = torch.randint(globals.total_vocab_size,labels.shape,dtype = torch.long)
-    inputs[indices_random] = random_words[indices_random]
+    # random_words = torch.randint(globals.total_vocab_size,labels.shape,dtype = torch.long,device=DEVICE)
+    # inputs[indices_random] = random_words[indices_random]
 
-    return inputs,lables
+    return inputs,labels
 
 def train_epoch(model,traindata,optimizr,scheduler,tokenizer):
 

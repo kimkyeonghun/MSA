@@ -1,6 +1,6 @@
 import os
 import torch
 
-DEVICE = torch.device("cuda:0")
+DEVICE = torch.device("cuda")
 VISUALDIM = 35
 SPEECHDIM = 74
