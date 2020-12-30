@@ -173,7 +173,7 @@ class MMBertModel(BertPreTrainedModel):
     #Need raw input_ids
     def forward(self,
     input_ids=None, attention_mask = None,token_type_ids = None, position_ids = None, head_mask =None, inputs_embeds = None,
-    encoder_hidden_states = None,encoder_attention_mask = None, output_attentions = None,output_hidden_states = None):
+    encoder_hidden_states = None,encoder_attention_mask = None, output_attentions = None,output_hidden_states = None,joint=False):
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -193,10 +193,11 @@ class MMBertModel(BertPreTrainedModel):
         if attention_mask is None:
             attention_mask = torch.ones(input_shape,device = device)
         if token_type_ids is None:
-            token_type_ids = torch.zeros(input_shape,dtype=torch.long,device=device)
+            token_type_ids = torch.zeros(input_shape,dtype=torch.float,device=device)
 
         #Maybe Error
-        #make [batch, from, to, TextDim] -> [batch, from, to]
+        #input_shape : [batch, seq, modality dim]
+        #if modality is visual or speech, will change 
         #squeezed_attention_mask = attention_mask.squeeze(-1)
         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask,input_shape,device)
 
@@ -204,15 +205,26 @@ class MMBertModel(BertPreTrainedModel):
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
             encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape,device=device)
+                encoder_attention_mask = torch.ones(encoder_hidden_shape, dtype=torch.float, device=device)
             encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
         else:
             encoder_extended_attention_mask = None
 
         head_mask = self.get_head_mask(head_mask,self.config.num_hidden_layers)
 
+        if joint:
+            embedding_output = input_ids
+        else:
+            embedding_output = self.embeddings(
+                input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
+            )
+        print('embedding_output',embedding_output.shape)
+        print('extended_attention_mask',extended_attention_mask.shape)
+        print('head_mask',len(head_mask))
+        print('encoder_hidden_states',encoder_hidden_states)
+        print('encoder_extended_attention_mask',encoder_extended_attention_mask)
         encoder_outputs =self.encoder(
-            input_ids,
+            embedding_output,
             attention_mask = extended_attention_mask,
             head_mask = head_mask,
             encoder_hidden_states = encoder_hidden_states,
@@ -250,7 +262,6 @@ class MMBertForPretraining(BertForPreTraining):
         super().__init__(config)
         self.cls = MMBertPreTrainingHeads(config)
         self.bert = MMBertModel(config)
-        #self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size,config.num_labels)
         
@@ -263,6 +274,7 @@ class MMBertForPretraining(BertForPreTraining):
             input_ids,
             attention_mask = attention_mask,
             token_type_ids = token_type_ids,
+            joint = joint,
         )
         
         sequence_output, pooled_output = outputs[:2]
@@ -279,11 +291,6 @@ class MMBertForPretraining(BertForPreTraining):
         text_loss = None
         visual_loss = None
         speech_loss = None
-        print("Text_input_ids",text_input_ids[0])
-        print("text_token_type_ids",text_token_type_ids[0])
-        print("text_attention_mask",text_attention_mask[0])
-        print("text_masked_lm_labels",text_masked_lm_labels[0])
-        print("text_next_sentence_label",text_next_sentence_label[0])
 
         if text_input_ids is not None:
             (text_prediction_scores, text_seq_relationship_score), text_pooled_output = self.get_bert_output(
@@ -300,12 +307,19 @@ class MMBertForPretraining(BertForPreTraining):
                 next_sentence_loss = loss_fct(text_seq_relationship_score.view(-1,2), text_next_sentence_label.view(-1))
                 total_loss = masked_lm_loss + next_sentence_loss
                 text_loss = total_loss
+
+        # print("Text_input_ids",text_input_ids[0])
+        # print("text_token_type_ids",text_token_type_ids[0])
+        # print("text_attention_mask",text_attention_mask[0])
+        # print("text_masked_lm_labels",text_masked_lm_labels[0])
+        # print("text_next_sentence_label",text_next_sentence_label[0])
                 
         if visual_input_ids is not None:
             (visual_prediction_scores, visual_seq_relationship_score), visual_pooled_output = self.get_bert_output(
                 input_ids = visual_input_ids,
                 attention_mask = visual_attention_mask,
                 token_type_ids = visual_token_type_ids,
+                joint = True,
             )
             
             outputs += (visual_prediction_scores, visual_seq_relationship_score)
@@ -322,6 +336,7 @@ class MMBertForPretraining(BertForPreTraining):
                 input_ids = speech_input_ids,
                 attention_mask = speech_attention_mask,
                 token_type_ids = speech_token_type_ids,
+                joint = True,
             )
             
             outputs += (speech_prediction_scores, speech_seq_relationship_score)

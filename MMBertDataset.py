@@ -45,21 +45,10 @@ class MMBertDataset(Dataset):
             return text_sentence, text_label, text_token_type_ids, tAv_sentence, tAv_label, tAv_token_type_ids, tAs_sentence, tAs_label, tAs_token_type_ids
     """
 
-    def __init__(self,tokenizer,features,config):
+    def __init__(self,tokenizer,features):
         self.tokenizer = tokenizer
         self.items = features
-        #self.embeddings = BertEmbeddings(config)
         self.total_item = self.count()
-
-    # def tokenToEmbedding(input_ids, position_ids=None, token_type_ids=None, inputs_embeds=None):
-    #     embedding_output = self.embeddings(
-    #         input_ids = input_ids,
-    #         position_ids = position_ids,
-    #         token_type_ids = token_type_ids,
-    #         inputs_embeds = inputs_embeds
-    #     )
-    #     return embedding_output
-
         
     def create_concat_joint_sentence(self, i, mode, max_token_len = -1):
         """
