@@ -130,13 +130,9 @@ class MMBertDataset(Dataset):
 
         #embedding_output = self.embeddings(textSentence,token_type_ids=torch.tensor(textTokenTypeIds,dtype=torch.long))
 
-        textSentence = torch.tensor(textSentence,dtype=torch.float).unsqueeze(-1)
-        temp = textSentence
-        while pairDim-1:
-            textSentence = torch.cat((textSentence,temp),axis=1)
-            pairDim-=1
+        textSentence = [CLS] + torch.tensor(textSentence,dtype=torch.float).unsqueeze(-1)
 
-        jointSentence = torch.cat((CLS,textSentence,torch.tensor(pairSentence,dtype=torch.float)))
+        jointSentence = (textSentence, pairSentence)
 
         return jointSentence, torch.tensor(label,dtype=torch.int64,device=cudas),torch.cat((
             torch.tensor(textTokenTypeIds,device=cudas),

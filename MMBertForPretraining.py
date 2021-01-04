@@ -5,6 +5,8 @@ from transformers.modeling_bert import BertEmbeddings, BertEncoder, BertPooler
 
 from transformers.modeling_utils import ModuleUtilsMixin
 
+from MMBertEmbedding import JointEmbeddings
+
 import torch
 
 from torch import nn
@@ -14,9 +16,12 @@ class MMBertModel(BertPreTrainedModel):
     def __init__(self,config):
         super().__init__(config)
         self.config = config
+        self.jointEmbeddings = JointEmbeddings(config.hidden_size,0.5)
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
+
+        #self.Linear_v = nn.Linear()
 
         self.init_weights()
 
@@ -49,7 +54,7 @@ class MMBertModel(BertPreTrainedModel):
             return first_tuple[1].dtype
 
     #From huggingface docu
-    def get_extended_attention_mask(self, attention_mask, input_shape, device):
+    def get_extended_attention_mask(self, attention_mask, input_shape, device, joint):
         """
         Makes broadcastable attention and causal masks so that future and masked tokens are ignored.
 
@@ -66,41 +71,51 @@ class MMBertModel(BertPreTrainedModel):
         """
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        if attention_mask.dim() == 3:
-            extended_attention_mask = attention_mask[:, None, :, :]
-        elif attention_mask.dim() == 2:
-            # Provided a padding mask of dimensions [batch_size, seq_length]
-            # - if the model is a decoder, apply a causal mask in addition to the padding mask
-            # - if the model is an encoder, make the mask broadcastable to [batch_size, num_heads, seq_length, seq_length]
-            if self.config.is_decoder:
-                batch_size, seq_length = input_shape
-                seq_ids = torch.arange(seq_length, device=device)
-                causal_mask = seq_ids[None, None, :].repeat(batch_size, seq_length, 1) <= seq_ids[None, :, None]
-                # in case past_key_values are used we need to add a prefix ones mask to the causal mask
-                # causal and attention masks must have same type with pytorch version < 1.3
-                causal_mask = causal_mask.to(attention_mask.dtype)
-
-                if causal_mask.shape[1] < attention_mask.shape[1]:
-                    prefix_seq_len = attention_mask.shape[1] - causal_mask.shape[1]
-                    causal_mask = torch.cat(
-                        [
-                            torch.ones(
-                                (batch_size, seq_length, prefix_seq_len), device=device, dtype=causal_mask.dtype
-                            ),
-                            causal_mask,
-                        ],
-                        axis=-1,
-                    )
-
-                extended_attention_mask = causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
-            else:
+        if joint:
+            if attention_mask.dim() == 3:
+                attention_mask = torch.narrow(attention_mask,2,0,1).squeeze(-1)
                 extended_attention_mask = attention_mask[:, None, None, :]
+            else:
+                raise ValueError(
+                    "You have so large dimension (), Check dimension or shape ".format(attetnion_mask.dim())
+                    )
         else:
-            raise ValueError(
-                "Wrong shape for input_ids (shape {}) or attention_mask (shape {})".format(
-                    input_shape, attention_mask.shape
+            if attention_mask.dim() == 3:
+                attention_mask = attention_mask.mean(2)
+                extended_attention_mask = attention_mask[:, None, None, :]
+            elif attention_mask.dim() == 2:
+                # Provided a padding mask of dimensions [batch_size, seq_length]
+                # - if the model is a decoder, apply a causal mask in addition to the padding mask
+                # - if the model is an encoder, make the mask broadcastable to [batch_size, num_heads, seq_length, seq_length]
+                if self.config.is_decoder:
+                    batch_size, seq_length = input_shape
+                    seq_ids = torch.arange(seq_length, device=device)
+                    causal_mask = seq_ids[None, None, :].repeat(batch_size, seq_length, 1) <= seq_ids[None, :, None]
+                    # in case past_key_values are used we need to add a prefix ones mask to the causal mask
+                    # causal and attention masks must have same type with pytorch version < 1.3
+                    causal_mask = causal_mask.to(attention_mask.dtype)
+
+                    if causal_mask.shape[1] < attention_mask.shape[1]:
+                        prefix_seq_len = attention_mask.shape[1] - causal_mask.shape[1]
+                        causal_mask = torch.cat(
+                            [
+                                torch.ones(
+                                    (batch_size, seq_length, prefix_seq_len), device=device, dtype=causal_mask.dtype
+                                ),
+                                causal_mask,
+                            ],
+                            axis=-1,
+                        )
+
+                    extended_attention_mask = causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
+                else:
+                    extended_attention_mask = attention_mask[:, None, None, :]
+            else:
+                raise ValueError(
+                    "Wrong shape for input_ids (shape {}) or attention_mask (shape {})".format(
+                        input_shape, attention_mask.shape
+                    )
                 )
-            )
 
         # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
         # masked positions, this operation will create a tensor which is 0.0 for
@@ -199,7 +214,8 @@ class MMBertModel(BertPreTrainedModel):
         #input_shape : [batch, seq, modality dim]
         #if modality is visual or speech, will change 
         #squeezed_attention_mask = attention_mask.squeeze(-1)
-        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask,input_shape,device)
+        
+        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask,input_shape,device,joint)
 
         if self.config.is_decoder and encoder_hidden_states is not None:
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
@@ -212,17 +228,19 @@ class MMBertModel(BertPreTrainedModel):
 
         head_mask = self.get_head_mask(head_mask,self.config.num_hidden_layers)
 
+        #print('input_ids',input_ids.shape)
+
         if joint:
-            embedding_output = input_ids
+            embedding_output = self.jointEmbeddings(input_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds)
         else:
             embedding_output = self.embeddings(
                 input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
             )
-        print('embedding_output',embedding_output.shape)
-        print('extended_attention_mask',extended_attention_mask.shape)
-        print('head_mask',len(head_mask))
-        print('encoder_hidden_states',encoder_hidden_states)
-        print('encoder_extended_attention_mask',encoder_extended_attention_mask)
+        # print('embedding_output',embedding_output.shape)
+        # print('extended_attention_mask',extended_attention_mask.shape)
+        # print('head_mask',len(head_mask))
+        # print('encoder_hidden_states',encoder_hidden_states)
+        # print('encoder_extended_attention_mask',encoder_extended_attention_mask)
         encoder_outputs =self.encoder(
             embedding_output,
             attention_mask = extended_attention_mask,
@@ -303,6 +321,11 @@ class MMBertForPretraining(BertForPreTraining):
             
             if text_masked_lm_labels is not None and text_next_sentence_label is not None:
                 loss_fct = torch.nn.CrossEntropyLoss()
+                print("text_prediction_scores", text_prediction_scores.shape)
+                print("text_masked_lm_labels", text_masked_lm_labels.shape)
+
+                print("text_prediction_scores", text_prediction_scores.view(-1,self.config.vocab_size))
+                print("text_masked_lm_labels", text_masked_lm_labels.view(-1))
                 masked_lm_loss = loss_fct(text_prediction_scores.view(-1,self.config.vocab_size),text_masked_lm_labels.view(-1))
                 next_sentence_loss = loss_fct(text_seq_relationship_score.view(-1,2), text_next_sentence_label.view(-1))
                 total_loss = masked_lm_loss + next_sentence_loss
@@ -325,9 +348,13 @@ class MMBertForPretraining(BertForPreTraining):
             outputs += (visual_prediction_scores, visual_seq_relationship_score)
             
             if visual_masked_lm_labels is not None and visual_next_sentence_label is not None:
-                loss_fct = torch.nn.CrossEntropyLoss()
-                masked_lm_loss = loss_fct(visual_prediction_scores.view(-1,self.config.vocab_size),visual_masked_lm_labels.view(-1))
-                next_sentence_loss = loss_fct(visual_seq_relationship_score.view(-1,2), visual_next_sentence_label.view(-1))
+                loss_fct2 = torch.nn.CrossEntropyLoss()
+
+                visual_masked_lm_labels = torch.narrow(visual_masked_lm_labels,2,0,1)
+                print("visual_prediction_scores", visual_prediction_scores.view(-1,self.config.vocab_size))
+                print("visual_masked_lm_labels", visual_masked_lm_labels.view(-1))
+                masked_lm_loss = loss_fct2(visual_prediction_scores.view(-1,self.config.vocab_size),visual_masked_lm_labels.view(-1))
+                next_sentence_loss = loss_fct2(visual_seq_relationship_score.view(-1,2), visual_next_sentence_label.view(-1))
                 total_loss = masked_lm_loss + next_sentence_loss
                 visual_loss = total_loss
         

@@ -46,7 +46,7 @@ def prepareForTraining(numTrainOptimizationSteps):
         Use waramup scheduler using Input
 
         return model : class MMBertForPretraining, optimizer : Admaw, scheduler : warmup_start
-    """"
+    """
     model = MMBertForPretraining.from_pretrained(args.model, num_labels=1)
     
     model.to(DEVICE)
@@ -332,12 +332,12 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         #padding visual and make attention_mask
         padded_visual_ids = pad_example(visual_examples)
         visual_attention_mask = torch.ones(padded_visual_ids.shape,dtype=torch.int64)
-        visual_attention_mask[(padded_visual_ids == 0)] = 0
+        visual_attention_mask[(padded_visual_ids <= 0)] = 0
 
         #padding speech and make attention_mask
         padded_speech_ids = pad_example(speech_examples)
         speech_attention_mask = torch.ones(padded_speech_ids.shape,dtype=torch.int64)
-        speech_attention_mask[(padded_speech_ids == 0)] = 0
+        speech_attention_mask[(padded_speech_ids <= 0)] = 0
 
         return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask,\
         padded_visual_ids, torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0),visual_attention_mask,\
@@ -356,9 +356,9 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
     model.train()
     for step, batch in enumerate(tqdm(trainDataloader,desc="Iteration")):
         batch = tuple(t.to(DEVICE) for t in batch)
-        text_ids,text_label,text_token_type_ids,text_attention_masks = batch[0],batch[1],batch[2],batch[3]
-        visual_ids,visual_label,visual_token_type_ids,visual_attention_masks = batch[4],batch[5],batch[6],batch[7]
-        speech_ids,speech_label,speech_token_type_ids,speech_attention_masks = batch[8],batch[9],batch[10],batch[11]
+        text_ids,text_label,text_token_type_ids,text_attention_masks = batch[0],batch[1],batch[2].long(),batch[3]
+        visual_ids,visual_label,visual_token_type_ids,visual_attention_masks = batch[4],batch[5],batch[6].long(),batch[7]
+        speech_ids,speech_label,speech_token_type_ids,speech_attention_masks = batch[8],batch[9],batch[10].long(),batch[11]
 
         #if args.mlm is true, do masking.
         text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids,text_ids)
@@ -391,8 +391,8 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
             text_input_ids = text_inputs,
             visual_input_ids = visual_inputs,
             speech_input_ids = speech_inputs,
-            text_token_type_ids = text_attention_masks,
-            visual_token_type_ids = visual_attention_masks,
+            text_token_type_ids = text_token_type_ids,
+            visual_token_type_ids = visual_token_type_ids,
             speech_token_type_ids = speech_token_type_ids,
             text_attention_mask = text_attention_masks,
             visual_attention_mask = visual_attention_masks,
