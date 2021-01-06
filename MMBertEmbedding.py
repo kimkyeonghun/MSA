@@ -35,3 +35,21 @@ class JointEmbeddings(nn.Module):
         embeddings = self.dropout(embeddings)
         
         return embeddings
+
+class FuseGate(nn.Module):
+    def __init__(self,hidden_size,dropout_prob):
+        super().__init__()
+
+        self.Wv = nn.Linear(VISUALDIM,1)
+        self.Ws = nn.Linear(SPEECHDIM,1)
+
+        self.LayerNorm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout_prob)
+
+    def forward(self,jointSentence,mode):
+        if mode == 'visual':
+            outputs = torch.cat((jointSentence[0],F.relu(self.Wv(jointSentence[1]))))
+        elif mode == 'speech':
+            outputs = torch.cat((jointSentence[0],F.relu(self.Ws(jointSentence[1]))))
+
+        return outputs

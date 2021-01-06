@@ -9,6 +9,8 @@ import numpy as np
 
 from transformers.modeling_bert import BertEmbeddings
 
+from MMBertEmbedding import FuseGate
+
 cudas = DEVICE
 
 class MMBertDataset(Dataset):
@@ -49,6 +51,7 @@ class MMBertDataset(Dataset):
         self.tokenizer = tokenizer
         self.items = features
         self.total_item = self.count()
+        self.fuseGate = FuseGate(1,0.5)
         
     def create_concat_joint_sentence(self, i, mode, max_token_len = -1):
         """
@@ -75,6 +78,7 @@ class MMBertDataset(Dataset):
         firstIndex = -1
         secondIndex = -1
         edgeCase = False
+        sentiment = 0
         label = -1
         
         if mode == 'visual':
@@ -89,8 +93,9 @@ class MMBertDataset(Dataset):
         if i == len(self.items)-1:
             firstIndex = i
             secondIndex = i
-            label = 0
+            label = 1
             edgeCase = True
+            sentiment = torch.argmax(torch.tensor(self.items[firstIndex][1][0]))
         
         if not edgeCase:
             r = random.uniform(0,1)
@@ -98,13 +103,14 @@ class MMBertDataset(Dataset):
             if r > 0.5:
                 firstIndex = i
                 secondIndex = i
-                label = 0
+                label = 1
+                sentiment = torch.argmax(torch.tensor(self.items[firstIndex][1][0]))
             else:
                 firstIndex = i
                 secondIndex = random.choice(range(len(self.items)))
                 while firstIndex == secondIndex:
                     secondIndex = random.choice(range(len(self.items)))
-                label = 1
+                label = 0
         
         textSentence = self.items[firstIndex][0][0]
         pairSentence = self.items[secondIndex][0][pairIndex]
@@ -120,24 +126,24 @@ class MMBertDataset(Dataset):
                 textSentence = first
                 pairSentence = second
         
-        textTokenTypeIds = np.zeros(len(textSentence) + 2)
-        pairTokenTypeIds = np.ones(len(pairSentence) + 1)
+        textTokenTypeIds = np.zeros(len(textSentence) + 1)
+        pairTokenTypeIds = np.ones(len(pairSentence))
 
-        CLS = torch.ones((1,pairDim),dtype=torch.float)*self.tokenizer.cls_token_id
+        CLS = self.tokenizer.sep_token_id
         SEP = self.tokenizer.sep_token_id
 
         #textSentence = torch.tensor(self.tokenizer.convert_tokens_to_ids(tokens),dtype=torch.long).unsqueeze(-1)
 
         #embedding_output = self.embeddings(textSentence,token_type_ids=torch.tensor(textTokenTypeIds,dtype=torch.long))
 
-        textSentence = [CLS] + torch.tensor(textSentence,dtype=torch.float).unsqueeze(-1)
+        textSentence = torch.tensor([CLS] + textSentence,dtype=torch.float).unsqueeze(-1)
 
-        jointSentence = (textSentence, pairSentence)
+        jointSentence = self.fuseGate((textSentence, torch.tensor(pairSentence,dtype=torch.float)),mode).squeeze(-1)
 
         return jointSentence, torch.tensor(label,dtype=torch.int64,device=cudas),torch.cat((
             torch.tensor(textTokenTypeIds,device=cudas),
             torch.tensor(pairTokenTypeIds,device=cudas))
-        )
+        ), sentiment
     
     def create_next_sentence_pair(self, i, max_token_len = -1):
         """
@@ -159,23 +165,25 @@ class MMBertDataset(Dataset):
         """
         firstSentence = None
         secondSentence = None
+        sentiment = 0
         
         if i == len(self.items)-1:
             firstSentence = self.items[i][0][0]
             secondSentence = self.items[i][0][0]
-            label = 1
+            label = 0
         else:
             firstSentence = self.items[i][0][0]
             r = random.uniform(0,1)
             
             if r > 0.5:
                 nextIdx = i+1
-                label = 0
+                label = 1
+                sentiment = torch.argmax(torch.tensor(self.items[i][1][0]))
             else:
                 nextIdx = random.choice(range(len(self.items)))
                 while i == nextIdx:
                     nextIdx = random.choice(range(len(self.items)))
-                label = 1
+                label = 0
             secondSentence = self.items[nextIdx][0][0]
 
         if max_token_len > 0:
@@ -199,9 +207,8 @@ class MMBertDataset(Dataset):
         jointSentences = np.concatenate(([CLS],firstSentence,[SEP],secondSentence,[SEP]))
 
         #embedding_output = self.embeddings(jointSentences,token_type_ids=torch.tensor(np.concatenate((firstTokenTypeIds,secondTokenTypeIds)),dtype=torch.long))
-
         return torch.tensor(jointSentences), torch.tensor(label,dtype=torch.int64,device=cudas),\
-        torch.cat((torch.tensor(firstTokenTypeIds,device=cudas),torch.tensor(secondTokenTypeIds,device=cudas)))
+        torch.cat((torch.tensor(firstTokenTypeIds,device=cudas),torch.tensor(secondTokenTypeIds,device=cudas))),sentiment
 
     def count(self):
         """
@@ -216,8 +223,10 @@ class MMBertDataset(Dataset):
         return self.total_item
     
     def __getitem__(self,i):
-        text_sentence, text_label, text_token_type_ids = self.create_next_sentence_pair(i,max_token_len = 75)
-        tAv_sentence, tAv_label, tAv_token_type_ids = self.create_concat_joint_sentence(i,'visual',max_token_len = -1)
-        tAs_sentence, tAs_label, tAs_token_type_ids = self.create_concat_joint_sentence(i,'speech',max_token_len = -1)
+        text_sentence, text_label, text_token_type_ids, text_sentiment = self.create_next_sentence_pair(i,max_token_len = 75)
+        tAv_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment = self.create_concat_joint_sentence(i,'visual',max_token_len = -1)
+        tAs_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment = self.create_concat_joint_sentence(i,'speech',max_token_len = -1)
         
-        return text_sentence, text_label, text_token_type_ids, tAv_sentence, tAv_label, tAv_token_type_ids, tAs_sentence, tAs_label, tAs_token_type_ids
+        return text_sentence, text_label, text_token_type_ids, text_sentiment,\
+         tAv_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment,\
+         tAs_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment

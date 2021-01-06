@@ -75,9 +75,36 @@ class MMBertModel(BertPreTrainedModel):
             if attention_mask.dim() == 3:
                 attention_mask = torch.narrow(attention_mask,2,0,1).squeeze(-1)
                 extended_attention_mask = attention_mask[:, None, None, :]
+            elif attention_mask.dim() == 2:
+                # Provided a padding mask of dimensions [batch_size, seq_length]
+                # - if the model is a decoder, apply a causal mask in addition to the padding mask
+                # - if the model is an encoder, make the mask broadcastable to [batch_size, num_heads, seq_length, seq_length]
+                if self.config.is_decoder:
+                    batch_size, seq_length = input_shape
+                    seq_ids = torch.arange(seq_length, device=device)
+                    causal_mask = seq_ids[None, None, :].repeat(batch_size, seq_length, 1) <= seq_ids[None, :, None]
+                    # in case past_key_values are used we need to add a prefix ones mask to the causal mask
+                    # causal and attention masks must have same type with pytorch version < 1.3
+                    causal_mask = causal_mask.to(attention_mask.dtype)
+
+                    if causal_mask.shape[1] < attention_mask.shape[1]:
+                        prefix_seq_len = attention_mask.shape[1] - causal_mask.shape[1]
+                        causal_mask = torch.cat(
+                            [
+                                torch.ones(
+                                    (batch_size, seq_length, prefix_seq_len), device=device, dtype=causal_mask.dtype
+                                ),
+                                causal_mask,
+                            ],
+                            axis=-1,
+                        )
+
+                    extended_attention_mask = causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
+                else:
+                    extended_attention_mask = attention_mask[:, None, None, :]
             else:
                 raise ValueError(
-                    "You have so large dimension (), Check dimension or shape ".format(attetnion_mask.dim())
+                    "You have so large dimension (), Check dimension or shape ".format(attention_mask.dim())
                     )
         else:
             if attention_mask.dim() == 3:
@@ -230,11 +257,14 @@ class MMBertModel(BertPreTrainedModel):
 
         #print('input_ids',input_ids.shape)
 
-        if joint:
-            embedding_output = self.jointEmbeddings(input_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds)
-        else:
-            embedding_output = self.embeddings(
-                input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
+        # if joint:
+        #     embedding_output = self.jointEmbeddings(input_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds)
+        # else:
+        #     embedding_output = self.embeddings(
+        #         input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
+        #     )
+        embedding_output = self.embeddings(
+                input_ids=input_ids.long(), position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
             )
         # print('embedding_output',embedding_output.shape)
         # print('extended_attention_mask',extended_attention_mask.shape)
@@ -281,7 +311,10 @@ class MMBertForPretraining(BertForPreTraining):
         self.cls = MMBertPreTrainingHeads(config)
         self.bert = MMBertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size,config.num_labels)
+        self.classifier = nn.Linear(config.hidden_size*3,7)
+        self.softmax = nn.Softmax(dim=1)
+
+        self.num_labels = 7
         
         #?
         self.init_weights()
@@ -303,7 +336,8 @@ class MMBertForPretraining(BertForPreTraining):
                 text_token_type_ids = None, visual_token_type_ids = None, speech_token_type_ids = None,
                 text_attention_mask = None, visual_attention_mask = None, speech_attention_mask = None,
                 text_masked_lm_labels = None, visual_masked_lm_labels = None, speech_masked_lm_labels = None,
-                text_next_sentence_label = None, visual_next_sentence_label = None, speech_next_sentence_label = None
+                text_next_sentence_label = None, visual_next_sentence_label = None, speech_next_sentence_label = None,
+                text_sentiment = None, visual_sentiment = None, speech_sentiment = None,
                ):
         outputs = ()
         text_loss = None
@@ -321,21 +355,10 @@ class MMBertForPretraining(BertForPreTraining):
             
             if text_masked_lm_labels is not None and text_next_sentence_label is not None:
                 loss_fct = torch.nn.CrossEntropyLoss()
-                print("text_prediction_scores", text_prediction_scores.shape)
-                print("text_masked_lm_labels", text_masked_lm_labels.shape)
-
-                print("text_prediction_scores", text_prediction_scores.view(-1,self.config.vocab_size))
-                print("text_masked_lm_labels", text_masked_lm_labels.view(-1))
                 masked_lm_loss = loss_fct(text_prediction_scores.view(-1,self.config.vocab_size),text_masked_lm_labels.view(-1))
                 next_sentence_loss = loss_fct(text_seq_relationship_score.view(-1,2), text_next_sentence_label.view(-1))
                 total_loss = masked_lm_loss + next_sentence_loss
                 text_loss = total_loss
-
-        # print("Text_input_ids",text_input_ids[0])
-        # print("text_token_type_ids",text_token_type_ids[0])
-        # print("text_attention_mask",text_attention_mask[0])
-        # print("text_masked_lm_labels",text_masked_lm_labels[0])
-        # print("text_next_sentence_label",text_next_sentence_label[0])
                 
         if visual_input_ids is not None:
             (visual_prediction_scores, visual_seq_relationship_score), visual_pooled_output = self.get_bert_output(
@@ -346,15 +369,10 @@ class MMBertForPretraining(BertForPreTraining):
             )
             
             outputs += (visual_prediction_scores, visual_seq_relationship_score)
-            
             if visual_masked_lm_labels is not None and visual_next_sentence_label is not None:
-                loss_fct2 = torch.nn.CrossEntropyLoss()
-
-                visual_masked_lm_labels = torch.narrow(visual_masked_lm_labels,2,0,1)
-                print("visual_prediction_scores", visual_prediction_scores.view(-1,self.config.vocab_size))
-                print("visual_masked_lm_labels", visual_masked_lm_labels.view(-1))
-                masked_lm_loss = loss_fct2(visual_prediction_scores.view(-1,self.config.vocab_size),visual_masked_lm_labels.view(-1))
-                next_sentence_loss = loss_fct2(visual_seq_relationship_score.view(-1,2), visual_next_sentence_label.view(-1))
+                loss_fct = torch.nn.CrossEntropyLoss()
+                masked_lm_loss = loss_fct(visual_prediction_scores.view(-1,self.config.vocab_size),visual_masked_lm_labels.view(-1).long())
+                next_sentence_loss = loss_fct(visual_seq_relationship_score.view(-1,2), visual_next_sentence_label.view(-1))
                 total_loss = masked_lm_loss + next_sentence_loss
                 visual_loss = total_loss
         
@@ -370,27 +388,28 @@ class MMBertForPretraining(BertForPreTraining):
             
             if speech_masked_lm_labels is not None and speech_next_sentence_label is not None:
                 loss_fct = torch.nn.CrossEntropyLoss()
-                masked_lm_loss = loss_fct(speech_prediction_scores.view(-1,self.config.vocab_size), speech_masked_lm_labels.view(-1))
+                masked_lm_loss = loss_fct(speech_prediction_scores.view(-1,self.config.vocab_size), speech_masked_lm_labels.view(-1).long())
                 next_sentence_loss = loss_fct(speech_seq_relationship_score.view(-1,2),speech_next_sentence_label.view(-1))
                 total_loss = masked_lm_loss+next_sentence_loss
-                speech_loss +=total_loss
+                speech_loss = total_loss
         
-        #Need Check
-        pooled_output = torch.cat(text_pooled_output,visual_pooled_output,speech_pooled_output)
+        pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=-1)
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
-        
-        outputs = (logits,) + outputs
-        
-        if labels is not None:
+
+        if text_sentiment is not None:
             if self.num_labels == 1:
                 #  We are doing regression
-                loss_fct = MSELoss()
-                loss = loss_fct(logits.view(-1), labels.view(-1))
+                loss_fct = torch.nn.MSELoss()
+                loss = loss_fct(logits.view(-1), text_sentiment.view(-1))
             else:
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(
-                    logits.view(-1, self.num_labels), labels.view(-1))
-            outputs = (loss,) + outputs
+                loss_fct = torch.nn.CrossEntropyLoss()
+                label_loss = loss_fct(
+                    logits, text_sentiment
+                    )
+
+        if text_loss is not None and visual_loss is not None and speech_loss is not None:
+            joint_loss = ((text_loss + visual_loss + speech_loss)/3.0) + label_loss
+            outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + outputs
             
-        return outputs
+        return outputs,logits

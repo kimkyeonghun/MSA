@@ -1,6 +1,9 @@
+import os
 import pickle
 import argparse
 import numpy as np
+
+from sklearn.metrics import accuracy_score, f1_score
 
 import torch
 from torch.nn import MSELoss
@@ -19,13 +22,17 @@ from MMBertDataset import MMBertDataset
 from MMBertForPretraining import MMBertForPretraining
 from config import DEVICE, VISUALDIM, SPEECHDIM
 
+os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1'
+
 parser= argparse.ArgumentParser()
 parser.add_argument("--dataset",type=str,choices=["mosi","mosei"],default='mosei')
 parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-base-uncased")
 parser.add_argument("--learning_rate",type=float,default=1e-5)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=50)
-parser.add_argument("--train_batch_size",type=int,default=4)
+parser.add_argument("--train_batch_size",type=int,default=6)
+parser.add_argument("--val_batch_size",type=int,default=4)
+parser.add_argument("--test_batch_size",type=int,default=1)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
 parser.add_argument("--mlm",type=bool,default=False)
 parser.add_argument("--mlm_probability",type=float,default = 0.15)
@@ -47,7 +54,8 @@ def prepareForTraining(numTrainOptimizationSteps):
 
         return model : class MMBertForPretraining, optimizer : Admaw, scheduler : warmup_start
     """
-    model = MMBertForPretraining.from_pretrained(args.model, num_labels=1)
+    model = MMBertForPretraining.from_pretrained(args.model, num_labels=7)
+    model = torch.nn.DataParallel(model)
     
     model.to(DEVICE)
                     
@@ -262,6 +270,82 @@ def mask_tokens(inputs, tokenizer, args):
 
     return inputs,labels
 
+def pad_example(examples,padding_value=0):
+    #padding_value will be tokenizer.pad_token_id
+    """
+        Do Padding using pad_sequence in torch.nn.utils.rnn.
+        padding_value's default is tokenizer.pad_token_id, but we use padding_value as 0.
+    """
+    # if tokenizer._pad_token is None:
+    #     return pad_sequence(examples,batch_first=True)
+    return pad_sequence(examples,batch_first=True, padding_value=padding_value)
+
+def collate(examples):
+    """
+        collate is used at collate_fun in Dataloader.
+        At each example like token_id, label, type_id, we make those to list.
+
+        Next, do padding with function pad_example at each_token_id and make attention_mask tensor that divide which token is padding or not.
+
+        return padded_text_ids : torch.tensor, text_label : torch.tensor, text_type_ids : torch.tensor, text_attention_mask : torch.tensor
+
+        return is repeated each modality.
+    """
+    #Init None list.
+    text_examples = [None]*len(examples)
+    text_label = [None]*len(examples)
+    text_type_ids = [None]*len(examples)
+    text_sentiment = [None]*len(examples)
+
+    visual_examples = [None]*len(examples)
+    visual_label = [None]*len(examples)
+    visual_type_ids = [None]*len(examples)
+    visual_sentiment = [None] * len(examples)
+
+    speech_examples = [None]*len(examples)
+    speech_label = [None]*len(examples)
+    speech_type_ids = [None]*len(examples)
+    speech_sentiment = [None] * len(examples)
+
+    # make examples to each list.
+    for i, (te,tl,tti,ts,ve,vl,vti,vs,se,sl,sti,ss) in enumerate(examples):
+        text_examples[i] = te
+        visual_examples[i] = ve
+        speech_examples[i] = se
+
+        text_label[i] = tl
+        visual_label[i] = vl
+        speech_label[i] = sl
+
+        text_type_ids[i] = tti
+        visual_type_ids[i] = vti
+        speech_type_ids[i] = sti
+
+        text_sentiment[i] = ts
+        visual_sentiment[i] = vs
+        speech_sentiment[i] = ss
+
+    #padding text and make attention_mask
+    padded_text_ids = pad_example(text_examples)
+    text_attention_mask = torch.ones(padded_text_ids.shape,dtype=torch.int64)
+    #padding part is masking with 0.
+    text_attention_mask[(padded_text_ids == 0)] = 0
+
+    #padding visual and make attention_mask
+    padded_visual_ids = pad_example(visual_examples)
+    visual_attention_mask = torch.ones(padded_visual_ids.shape,dtype=torch.int64)
+    visual_attention_mask[(padded_visual_ids == 0)] = 0
+
+    #padding speech and make attention_mask
+    padded_speech_ids = pad_example(speech_examples)
+    speech_attention_mask = torch.ones(padded_speech_ids.shape,dtype=torch.int64)
+    speech_attention_mask[(padded_speech_ids == 0)] = 0
+
+    return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask, torch.tensor(text_sentiment,dtype = torch.long),\
+    padded_visual_ids, torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0),visual_attention_mask, torch.tensor(visual_sentiment,dtype = torch.long),\
+    padded_speech_ids, torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0),speech_attention_mask, torch.tensor(speech_sentiment,dtype = torch.long)
+
+
 def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
     """
         Input = model : MMBertForPretraining, traindata : torch.utils.data.Dataset, optimizer : AdamW, scheduler : warmup_start, tokenizer : BertTokenizer
@@ -276,73 +360,6 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
 
         return training_loss divided by training step.
     """
-    def pad_example(examples,padding_value=tokenizer.pad_token_id):
-        """
-           Do Padding using pad_sequence in torch.nn.utils.rnn.
-           padding_value's default is tokenizer.pad_token_id, but we use padding_value as 0.
-        """
-        if tokenizer._pad_token is None:
-            return pad_sequence(examples,batch_first=True)
-        return pad_sequence(examples,batch_first=True, padding_value=padding_value)
-
-    def collate(examples):
-        """
-            collate is used at collate_fun in Dataloader.
-            At each example like token_id, label, type_id, we make those to list.
-
-            Next, do padding with function pad_example at each_token_id and make attention_mask tensor that divide which token is padding or not.
-
-            return padded_text_ids : torch.tensor, text_label : torch.tensor, text_type_ids : torch.tensor, text_attention_mask : torch.tensor
-
-            return is repeated each modality.
-        """
-        #Init None list.
-        text_examples = [None]*len(examples)
-        text_label = [None]*len(examples)
-        text_type_ids = [None]*len(examples)
-
-        visual_examples = [None]*len(examples)
-        visual_label = [None]*len(examples)
-        visual_type_ids = [None]*len(examples)
-
-        speech_examples = [None]*len(examples)
-        speech_label = [None]*len(examples)
-        speech_type_ids = [None]*len(examples)
-
-        # make examples to each list.
-        for i, (te,tl,tti,ve,vl,vti,se,sl,sti) in enumerate(examples):
-            text_examples[i] = te
-            visual_examples[i] = ve
-            speech_examples[i] = se
-
-            text_label[i] = tl
-            visual_label[i] = vl
-            speech_label[i] = sl
-
-            text_type_ids[i] = tti
-            visual_type_ids[i] = vti
-            speech_type_ids[i] = sti
-
-        #padding text and make attention_mask
-        padded_text_ids = pad_example(text_examples)
-        text_attention_mask = torch.ones(padded_text_ids.shape,dtype=torch.int64)
-        #padding part is masking with 0.
-        text_attention_mask[(padded_text_ids == 0)] = 0
-
-        #padding visual and make attention_mask
-        padded_visual_ids = pad_example(visual_examples)
-        visual_attention_mask = torch.ones(padded_visual_ids.shape,dtype=torch.int64)
-        visual_attention_mask[(padded_visual_ids <= 0)] = 0
-
-        #padding speech and make attention_mask
-        padded_speech_ids = pad_example(speech_examples)
-        speech_attention_mask = torch.ones(padded_speech_ids.shape,dtype=torch.int64)
-        speech_attention_mask[(padded_speech_ids <= 0)] = 0
-
-        return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask,\
-        padded_visual_ids, torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0),visual_attention_mask,\
-        padded_speech_ids, torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0),speech_attention_mask
-
     #Make Dataloader
     trainSampler = RandomSampler(traindata)
     trainDataloader = DataLoader(
@@ -355,10 +372,9 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
     nb_tr_steps = 0
     model.train()
     for step, batch in enumerate(tqdm(trainDataloader,desc="Iteration")):
-        batch = tuple(t.to(DEVICE) for t in batch)
-        text_ids,text_label,text_token_type_ids,text_attention_masks = batch[0],batch[1],batch[2].long(),batch[3]
-        visual_ids,visual_label,visual_token_type_ids,visual_attention_masks = batch[4],batch[5],batch[6].long(),batch[7]
-        speech_ids,speech_label,speech_token_type_ids,speech_attention_masks = batch[8],batch[9],batch[10].long(),batch[11]
+        text_ids,text_label,text_token_type_ids,text_attention_masks,text_sentiment = batch[0],batch[1],batch[2].long(),batch[3],batch[4]
+        visual_ids,visual_label,visual_token_type_ids,visual_attention_masks,visual_sentiment = batch[5],batch[6],batch[7].long(),batch[8],batch[9]
+        speech_ids,speech_label,speech_token_type_ids,speech_attention_masks,speech_sentiment = batch[10],batch[11],batch[12].long(),batch[13],batch[14]
 
         #if args.mlm is true, do masking.
         text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids,text_ids)
@@ -386,8 +402,12 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         visual_attention_masks = visual_attention_masks.to(DEVICE)
         speech_attention_masks = speech_attention_masks.to(DEVICE)
 
+        text_sentiment = text_sentiment.to(DEVICE)
+        visual_sentiment = visual_sentiment.to(DEVICE)
+        speech_sentiment = speech_sentiment.to(DEVICE)
+
         #get outpus using model(MMbertForpretraining)
-        outputs = model(
+        outputs,_ = model(
             text_input_ids = text_inputs,
             visual_input_ids = visual_inputs,
             speech_input_ids = speech_inputs,
@@ -403,30 +423,167 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
             text_next_sentence_label = text_label,
             visual_next_sentence_label = visual_label,
             speech_next_sentence_label = speech_label,
+            text_sentiment = text_sentiment,
+            visual_sentiment = visual_sentiment,
+            speech_sentiment = speech_sentiment,
         )
 
         #Need to check
-        logits = outputs[0]
-        loss_fct = MSELoss()
-        loss = loss_fct(logits.view(-1),label_ids.view(-1))
+        loss = outputs[0]
+        text_loss = outputs[1]
 
-        loss.backward()
+        loss.mean().backward()
 
-        tr_loss += loss.item()
+        train_loss += loss.mean().item()
         nb_tr_steps +=1
 
         if (step + 1)& args.gradient_accumulation_step == 0:
             optimizer.step()
             scheduler.step()
-            optimizer.zero_grad()
+            model.zero_grad()
         
-        return tr_loss / nb_tr_steps
+    return train_loss / nb_tr_steps
+
+def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
+    model.eval()
+    dev_loss = 0
+    nb_dev_examples,nb_dev_steps = 0,0
+
+    valSampler = RandomSampler(valDataset)
+    valDataloader = DataLoader(
+        valDataset, sampler=valSampler, batch_size=args.val_batch_size, collate_fn=collate
+    )
+    with torch.no_grad():
+        for step, batch in enumerate(tqdm(valDataloader,desc="Iteration")):
+            batch = tuple(t.to(DEVICE) for t in batch)
+            text_ids,text_label,text_token_type_ids,text_attention_masks,text_sentiment = batch[0],batch[1],batch[2].long(),batch[3],batch[4]
+            visual_ids,visual_label,visual_token_type_ids,visual_attention_masks,visual_sentiment = batch[5],batch[6],batch[7].long(),batch[8],batch[9]
+            speech_ids,speech_label,speech_token_type_ids,speech_attention_masks,speech_sentiment = batch[10],batch[11],batch[12].long(),batch[13],batch[14]
+
+            text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids,text_ids)
+            visual_inputs, visual_mask_labels = mask_tokens(visual_ids,tokenizer,args) if args.mlm else (visual_ids, visual_ids)
+            speech_inputs, speech_mask_labels = mask_tokens(speech_ids,tokenizer,args) if args.mlm else (speech_ids, speech_ids)
+
+            outputs,_ = model(
+                text_input_ids = text_inputs,
+                visual_input_ids = visual_inputs,
+                speech_input_ids = speech_inputs,
+                text_token_type_ids = text_token_type_ids,
+                visual_token_type_ids = visual_token_type_ids,
+                speech_token_type_ids = speech_token_type_ids,
+                text_attention_mask = text_attention_masks,
+                visual_attention_mask = visual_attention_masks,
+                speech_attention_mask = speech_attention_masks,
+                text_masked_lm_labels = text_mask_labels,
+                visual_masked_lm_labels = visual_mask_labels,
+                speech_masked_lm_labels = speech_mask_labels,
+                text_next_sentence_label = text_label,
+                visual_next_sentence_label = visual_label,
+                speech_next_sentence_label = speech_label,
+                text_sentiment = text_sentiment,
+                visual_sentiment = visual_sentiment,
+                speech_sentiment = speech_sentiment,
+            )
+
+            loss = outputs[0]
+
+            dev_loss += loss.mean().item()
+            nb_dev_steps +=1
+
+    return dev_loss / nb_dev_steps
+
+
+def test_epoch(model,testDataloader):
+    model.eval()
+    preds = []
+    labels = []
+
+    with torch.no_grad():
+        for batch in tqdm(testDataloader):
+            batch = tuple(t.to(DEVICE) for t in batch)
+
+            text_ids,text_label,text_token_type_ids,text_attention_masks,text_sentiment = batch[0],batch[1],batch[2].long(),batch[3],batch[4]
+            visual_ids,visual_label,visual_token_type_ids,visual_attention_masks,visual_sentiment = batch[5],batch[6],batch[7].long(),batch[8],batch[9]
+            speech_ids,speech_label,speech_token_type_ids,speech_attention_masks,speech_sentiment = batch[10],batch[11],batch[12].long(),batch[13],batch[14]
+
+            outputs,logits = model(
+                text_input_ids = text_ids,
+                visual_input_ids = visual_ids,
+                speech_input_ids = speech_ids,
+                text_token_type_ids = text_token_type_ids,
+                visual_token_type_ids = visual_token_type_ids,
+                speech_token_type_ids = speech_token_type_ids,
+                text_attention_mask = text_attention_masks,
+                visual_attention_mask = visual_attention_masks,
+                speech_attention_mask = speech_attention_masks,
+                text_masked_lm_labels = None,
+                visual_masked_lm_labels = None,
+                speech_masked_lm_labels = None,
+                text_next_sentence_label = None,
+                visual_next_sentence_label = None,
+                speech_next_sentence_label = None,
+                text_sentiment = text_sentiment,
+                visual_sentiment = visual_sentiment,
+                speech_sentiment = speech_sentiment,
+            )
+
+            logits = logits.detach().cpu().numpy()
+            label_ids = text_sentiment.detach().cpu().numpy()
+
+            logits = np.squeeze(logits).tolist()
+
+            preds.extend(logits)
+            labels.extend(label_ids)
+
+        preds = np.array(preds)
+        labels = np.array(labels)
+
+    return preds, labels
+
+def test_score_model(model,testDataset):
+
+    testSampler = RandomSampler(testDataset)
+    testDataloader = DataLoader(
+        testDataset, sampler=testSampler, batch_size=args.test_batch_size, collate_fn=collate
+    )    
+
+    preds, y_test = test_epoch(model,testDataloader)
+
+    non_zeros = np.array(
+        [i for i, e in enumerate(y_test) if e != 0 or False])
+
+    preds = preds[non_zeros]
+    y_test = y_test[non_zeros]
+
+    mae = np.mean(np.absolute(preds - y_test))
+    corr = np.corrcoef(preds, y_test)[0][1]
+
+    preds = preds >= 0
+    y_test = y_test >= 0
+
+    f_score = f1_score(y_test, preds, average="weighted")
+    acc = accuracy_score(y_test, preds)
+
+    return acc, mae, corr, f_score
+
 
 def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenizer):
-    val_loss = []
+    val_losses = []
     test_accuracy = []
     for epoch in range(int(args.n_epochs)):
         train_loss = train_epoch(model,trainDataset,optimizer,scheduler,tokenizer)
+        valid_loss = eval_epoch(model,valDataset,optimizer,scheduler,tokenizer)
+        test_acc,test_mae,test_corr,test_f_score = test_score_model(model,testDataset)
+
+        print(
+            "epoch:{}, train_loss:{}, valid_loss:{}, test_acc:{}".format(
+                epoch, train_loss, valid_loss, test_acc
+            )
+        )
+
+        val_losses.append(valid_loss)
+        test_accuracy.append(test_acc)
+
 
 def main():
     (
