@@ -1,6 +1,9 @@
 import os
 import pickle
 import argparse
+import logging
+from tqdm import tqdm, trange
+
 import numpy as np
 
 from sklearn.metrics import accuracy_score, f1_score
@@ -10,17 +13,18 @@ from torch.nn import MSELoss
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, RandomSampler
 
-from tqdm import tqdm, trange
+
 
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
+from transformers.optimization import AdamW
 #from transformers.configuration_bert import BertConfig
 #from transformers.modeling_bert import BertModel
-from transformers.optimization import AdamW
 
 from MMBertDataset import MMBertDataset
 #To modify model name MMBertForPretraining -> MMBertForPreTraining
 from MMBertForPretraining import MMBertForPretraining
 from config import DEVICE, VISUALDIM, SPEECHDIM
+import utils
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1'
 
@@ -39,6 +43,8 @@ parser.add_argument("--mlm_probability",type=float,default = 0.15)
 parser.add_argument("--max_seq_length",type=int, default = 200)
 
 args = parser.parse_args()
+
+logger, log_dir = utils.get_logger(os.path.join('./logs'))
 
 def prepareForTraining(numTrainOptimizationSteps):
     """
@@ -214,6 +220,7 @@ def loadDataset():
         return (trainDataset : torch.utils.data.Dataset, valDataset : torch.utils.data.Dataset, testDataset : torch.utils.data.Dataset, numTrainOpimizationSteps,tokenizer)
     """
     #If you don't save pkl to byte form, then you may change read mode.
+    logger.info("**********Load CMU_{} Dataset**********".format(args.dataset))
     with open("cmu_{}.pkl".format(args.dataset),'br') as fr:
         data = pickle.load(fr)
         
@@ -221,12 +228,20 @@ def loadDataset():
     valData = data["val"]
     testData = data["test"]
     
+    logger.info("**********Split Train Dataset**********")
     trainDataset, tokenizer = makeDataset(trainData)
-    print("Finish Train makeDataset")
+    logger.info("The Length of TrainDataset : {}".format(len(trainDataset)))
+    logger.info("**********Finish Train makeDataset**********")
+
+    logger.info("**********Split Valid Dataset**********")
     valDataset, _ = makeDataset(valData)
-    print("Finish val makeDataset")
+    logger.info("The Length of ValDataset : {}".format(len(valDataset)))
+    logger.info("**********Finish Valid makeDataset**********")
+
+    logger.info("**********Split Test Dataset**********")
     testDataset, _ = makeDataset(testData)
-    print("Finish test makeDataset")
+    logger.info("The Length of TestDataset : {}".format(len(testDataset)))
+    logger.info("**********Finish Test makeDataset**********")
 
     #maybe warmup start?
     numTrainOptimizationSteps = (int(len(trainData)/ args.train_batch_size / args.gradient_accumulation_step)) * args.n_epochs
@@ -440,7 +455,7 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         if (step + 1)& args.gradient_accumulation_step == 0:
             optimizer.step()
             scheduler.step()
-            model.zero_grad()
+            optimizer.zero_grad()
         
     return train_loss / nb_tr_steps
 
@@ -570,22 +585,32 @@ def test_score_model(model,testDataset):
 def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenizer):
     val_losses = []
     test_accuracy = []
+
+    model_save_path = utils.make_date_dir("./model_save")
+    logger.info("Model save path: {}".format(model_save_path))
+
     for epoch in range(int(args.n_epochs)):
+        logger.info("=====================Train======================")
         train_loss = train_epoch(model,trainDataset,optimizer,scheduler,tokenizer)
+        logger.info("[Train Epoch {}] Loss : {}".format(epoch+1,train_loss))
+
+        torch.save(model.state_dict(),os.path.join(model_save_path,'model_'+str(epoch+1)+".pt"))
+
+        logger.info("=====================Valid======================")
         valid_loss = eval_epoch(model,valDataset,optimizer,scheduler,tokenizer)
+        logger.info("[Val Epoch {}] Loss : {}".format(epoch+1,valid_loss))
+
+        logger.info("=====================Test======================")
         test_acc,test_mae,test_corr,test_f_score = test_score_model(model,testDataset)
 
-        print(
-            "epoch:{}, train_loss:{}, valid_loss:{}, test_acc:{}".format(
-                epoch, train_loss, valid_loss, test_acc
-            )
-        )
+        logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_CORR: {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_corr,test_f_score))
 
         val_losses.append(valid_loss)
         test_accuracy.append(test_acc)
 
 
 def main():
+    logger.info("======================Load and Split Dataset======================")
     (
         trainDataset,
         valDataset,
@@ -593,10 +618,17 @@ def main():
         numTrainOptimizationSteps,
         tokenizer
     ) = loadDataset()
-    
+
+    logger.info("======================Prepare For Training======================")
     model, optimizer, scheduler = prepareForTraining(numTrainOptimizationSteps)
     
     train(model, trainDataset, valDataset, testDataset, optimizer, scheduler,tokenizer)
 
 if __name__=="__main__":
-    main()
+    try:
+        main()
+    except:
+        logger.exception("ERROR")
+    finally:
+        logger.handlers.clear()
+        logging.shutdown()

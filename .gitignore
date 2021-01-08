@@ -170,6 +170,10 @@ dmypy.json
 ### data folder ###
 /data
 
+### train folder ###
+/logs
+/model_save
+
 ### preprocessing data ###
 *.pkl
 
