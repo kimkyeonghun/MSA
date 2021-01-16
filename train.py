@@ -10,10 +10,7 @@ from sklearn.metrics import accuracy_score, f1_score
 
 import torch
 from torch.nn import MSELoss
-from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, RandomSampler
-
-
 
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
 from transformers.optimization import AdamW
@@ -24,21 +21,23 @@ from MMBertDataset import MMBertDataset
 #To modify model name MMBertForPretraining -> MMBertForPreTraining
 from MMBertForPretraining import MMBertForPretraining
 from config import DEVICE, VISUALDIM, SPEECHDIM
+import config
 import utils
+import model_utils
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1'
 
 parser= argparse.ArgumentParser()
 parser.add_argument("--dataset",type=str,choices=["mosi","mosei"],default='mosei')
 parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-base-uncased")
-parser.add_argument("--learning_rate",type=float,default=1e-5)
+parser.add_argument("--learning_rate",type=float,default=1e-6)
 parser.add_argument("--warmup_proportion",type=float,default=1)
-parser.add_argument("--n_epochs",type=int,default=50)
+parser.add_argument("--n_epochs",type=int,default=100)
 parser.add_argument("--train_batch_size",type=int,default=6)
 parser.add_argument("--val_batch_size",type=int,default=4)
 parser.add_argument("--test_batch_size",type=int,default=1)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
-parser.add_argument("--mlm",type=bool,default=False)
+parser.add_argument("--mlm",type=bool,default=True)
 parser.add_argument("--mlm_probability",type=float,default = 0.15)
 parser.add_argument("--max_seq_length",type=int, default = 200)
 
@@ -60,7 +59,7 @@ def prepareForTraining(numTrainOptimizationSteps):
 
         return model : class MMBertForPretraining, optimizer : Admaw, scheduler : warmup_start
     """
-    model = MMBertForPretraining.from_pretrained(args.model, num_labels=7)
+    model = MMBertForPretraining.from_pretrained(args.model, num_labels=2)
     model = torch.nn.DataParallel(model)
     
     model.to(DEVICE)
@@ -264,13 +263,12 @@ def mask_tokens(inputs, tokenizer, args):
         tokenizer.get_special_tokens_mask(val,already_has_special_tokens=True) for val in labels.tolist()
     ]
 
-    print(torch.tensor(special_tokens_mask,dtype=torch.bool).shape)
     #Shape probelm
     #RuntimeError: The expanded size of the tensor (35) must match the existing size (51) at non-singleton dimension 2.  Target sizes: [4, 51, 35].  Tensor sizes: [4, 51]
     probability_matrix.masked_fill_(torch.tensor(special_tokens_mask,dtype=torch.bool,device=DEVICE),value=0.0)
     if tokenizer._pad_token is not None:
         padding_mask = labels.eq(tokenizer.pad_token_id)
-        probability_matrix.masked_fill(padding_mask, value=0.0)
+        probability_matrix.masked_fill(padding_mask.cuda(), value=0.0)
     masked_indices = torch.bernoulli(probability_matrix).bool()
     labels[~masked_indices] = -100
 
@@ -278,87 +276,12 @@ def mask_tokens(inputs, tokenizer, args):
     #Check this line necessary
     inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
 
-    indices_random = torch.bernoulli(torch.full(labels.shape,0.5,device=DEVICE)).bool() & masked_indices & ~indices_replaced
+    #indices_random = torch.bernoulli(torch.full(labels.shape,0.5,device=DEVICE)).bool() & masked_indices & ~indices_replaced
     #Must make total_vocab_size in globals
-    # random_words = torch.randint(globals.total_vocab_size,labels.shape,dtype = torch.long,device=DEVICE)
-    # inputs[indices_random] = random_words[indices_random]
+    #random_words = torch.randint(config.total_vocab_size,labels.shape,dtype = torch.long,device=DEVICE)
+    #inputs[indices_random] = random_words[indices_random]
 
     return inputs,labels
-
-def pad_example(examples,padding_value=0):
-    #padding_value will be tokenizer.pad_token_id
-    """
-        Do Padding using pad_sequence in torch.nn.utils.rnn.
-        padding_value's default is tokenizer.pad_token_id, but we use padding_value as 0.
-    """
-    # if tokenizer._pad_token is None:
-    #     return pad_sequence(examples,batch_first=True)
-    return pad_sequence(examples,batch_first=True, padding_value=padding_value)
-
-def collate(examples):
-    """
-        collate is used at collate_fun in Dataloader.
-        At each example like token_id, label, type_id, we make those to list.
-
-        Next, do padding with function pad_example at each_token_id and make attention_mask tensor that divide which token is padding or not.
-
-        return padded_text_ids : torch.tensor, text_label : torch.tensor, text_type_ids : torch.tensor, text_attention_mask : torch.tensor
-
-        return is repeated each modality.
-    """
-    #Init None list.
-    text_examples = [None]*len(examples)
-    text_label = [None]*len(examples)
-    text_type_ids = [None]*len(examples)
-    text_sentiment = [None]*len(examples)
-
-    visual_examples = [None]*len(examples)
-    visual_label = [None]*len(examples)
-    visual_type_ids = [None]*len(examples)
-    visual_sentiment = [None] * len(examples)
-
-    speech_examples = [None]*len(examples)
-    speech_label = [None]*len(examples)
-    speech_type_ids = [None]*len(examples)
-    speech_sentiment = [None] * len(examples)
-
-    # make examples to each list.
-    for i, (te,tl,tti,ts,ve,vl,vti,vs,se,sl,sti,ss) in enumerate(examples):
-        text_examples[i] = te
-        visual_examples[i] = ve
-        speech_examples[i] = se
-
-        text_label[i] = tl
-        visual_label[i] = vl
-        speech_label[i] = sl
-
-        text_type_ids[i] = tti
-        visual_type_ids[i] = vti
-        speech_type_ids[i] = sti
-
-        text_sentiment[i] = ts
-        visual_sentiment[i] = vs
-        speech_sentiment[i] = ss
-
-    #padding text and make attention_mask
-    padded_text_ids = pad_example(text_examples)
-    text_attention_mask = torch.ones(padded_text_ids.shape,dtype=torch.int64)
-    #padding part is masking with 0.
-    text_attention_mask[(padded_text_ids == 0)] = 0
-
-    #padding visual and make attention_mask
-    padded_visual_ids = pad_example(visual_examples)
-    visual_attention_mask = torch.ones(padded_visual_ids.shape,dtype=torch.int64)
-    visual_attention_mask[(padded_visual_ids == 0)] = 0
-
-    #padding speech and make attention_mask
-    padded_speech_ids = pad_example(speech_examples)
-    speech_attention_mask = torch.ones(padded_speech_ids.shape,dtype=torch.int64)
-    speech_attention_mask[(padded_speech_ids == 0)] = 0
-
-    return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask, torch.tensor(text_sentiment,dtype = torch.long),\
-    padded_visual_ids, torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0),visual_attention_mask, torch.tensor(visual_sentiment,dtype = torch.long),\
-    padded_speech_ids, torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0),speech_attention_mask, torch.tensor(speech_sentiment,dtype = torch.long)
 
 
 def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
@@ -378,7 +301,7 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
     #Make Dataloader
     trainSampler = RandomSampler(traindata)
     trainDataloader = DataLoader(
-        traindata, sampler=trainSampler, batch_size=args.train_batch_size, collate_fn=collate
+        traindata, sampler=trainSampler, batch_size=args.train_batch_size, collate_fn=model_utils.collate
     )
 
     #Train
@@ -435,7 +358,7 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
             text_masked_lm_labels = text_mask_labels,
             visual_masked_lm_labels = visual_mask_labels,
             speech_masked_lm_labels = speech_mask_labels,
-            text_next_sentence_label = text_label,
+            text_next_sentence_label = None,
             visual_next_sentence_label = visual_label,
             speech_next_sentence_label = speech_label,
             text_sentiment = text_sentiment,
@@ -460,13 +383,27 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
     return train_loss / nb_tr_steps
 
 def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
+    """
+        Input = model : MMBertForPretraining, valdata : torch.utils.data.Dataset, optimizer : AdamW, scheduler : warmup_start, tokenizer : BertTokenizer
+        Do eval model in set epoch.
+
+        Using Randomsampler and Dataloader, make valdataset to valDataloader that do evaling.
+        Datalodaer has collate function. collate function does padding at all examples.
+
+        If args.mlm is True, do masking at text(visual, speech)_id.
+
+        After finishing padding and masking, get outputs using model with no_grad. Next, calculate loss.
+
+        return eval_loss divided by dev_step.
+    """
+
     model.eval()
     dev_loss = 0
     nb_dev_examples,nb_dev_steps = 0,0
 
     valSampler = RandomSampler(valDataset)
     valDataloader = DataLoader(
-        valDataset, sampler=valSampler, batch_size=args.val_batch_size, collate_fn=collate
+        valDataset, sampler=valSampler, batch_size=args.val_batch_size, collate_fn = model_utils.collate
     )
     with torch.no_grad():
         for step, batch in enumerate(tqdm(valDataloader,desc="Iteration")):
@@ -509,6 +446,14 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
 
 
 def test_epoch(model,testDataloader):
+    """
+        Input = model : MMBertForPretraining, testdata : torch.utils.data.Dataloader
+        Do test model in set epoch.
+
+        After finishing padding, get outputs using model.
+
+        return predict and true
+    """
     model.eval()
     preds = []
     labels = []
@@ -556,10 +501,17 @@ def test_epoch(model,testDataloader):
     return preds, labels
 
 def test_score_model(model,testDataset):
+    """
+        Input = model : MMBertForPretraining, traindata : torch.utils.data.Dataset
+        
+        Using model's prediction, cal MAE, ACC, F_score
+
+        return acc, MAE, F_score
+    """
 
     testSampler = RandomSampler(testDataset)
     testDataloader = DataLoader(
-        testDataset, sampler=testSampler, batch_size=args.test_batch_size, collate_fn=collate
+        testDataset, sampler=testSampler, batch_size=args.test_batch_size, collate_fn = model_utils.collate
     )    
 
     preds, y_test = test_epoch(model,testDataloader)
@@ -570,8 +522,9 @@ def test_score_model(model,testDataset):
     preds = preds[non_zeros]
     y_test = y_test[non_zeros]
 
+    #MAE
     mae = np.mean(np.absolute(preds - y_test))
-    corr = np.corrcoef(preds, y_test)[0][1]
+    #corr = np.corrcoef(preds, y_test)[0][1]
 
     preds = preds >= 0
     y_test = y_test >= 0
@@ -579,34 +532,48 @@ def test_score_model(model,testDataset):
     f_score = f1_score(y_test, preds, average="weighted")
     acc = accuracy_score(y_test, preds)
 
-    return acc, mae, corr, f_score
+    return acc, mae, f_score
 
 
 def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenizer):
+    """
+    Train using train_epoch, eval_epoch, test_score_model.
+
+    Adopt EarlyStopping checking valid loss.
+    """
     val_losses = []
     test_accuracy = []
 
     model_save_path = utils.make_date_dir("./model_save")
     logger.info("Model save path: {}".format(model_save_path))
 
+    best_acc = 0
+    patience = 0
     for epoch in range(int(args.n_epochs)):
+        patience += 1
+
         logger.info("=====================Train======================")
         train_loss = train_epoch(model,trainDataset,optimizer,scheduler,tokenizer)
         logger.info("[Train Epoch {}] Loss : {}".format(epoch+1,train_loss))
-
-        torch.save(model.state_dict(),os.path.join(model_save_path,'model_'+str(epoch+1)+".pt"))
 
         logger.info("=====================Valid======================")
         valid_loss = eval_epoch(model,valDataset,optimizer,scheduler,tokenizer)
         logger.info("[Val Epoch {}] Loss : {}".format(epoch+1,valid_loss))
 
         logger.info("=====================Test======================")
-        test_acc,test_mae,test_corr,test_f_score = test_score_model(model,testDataset)
+        test_acc,test_mae,test_f_score = test_score_model(model,testDataset)
 
-        logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_CORR: {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_corr,test_f_score))
+        logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_f_score))
+
+        if test_acc > best_acc:
+            torch.save(model.state_dict(),os.path.join(model_save_path,'model_'+str(epoch+1)+".pt"))
+            best_acc = test_acc
+            patience = 0
 
         val_losses.append(valid_loss)
         test_accuracy.append(test_acc)
+        if patience == 7:
+            break
 
 
 def main():

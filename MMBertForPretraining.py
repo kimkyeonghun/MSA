@@ -311,10 +311,10 @@ class MMBertForPretraining(BertForPreTraining):
         self.cls = MMBertPreTrainingHeads(config)
         self.bert = MMBertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size*3,7)
+        self.classifier = nn.Linear(config.hidden_size*3,2)
         self.softmax = nn.Softmax(dim=1)
 
-        self.num_labels = 7
+        self.num_labels = 2
         
         #?
         self.init_weights()
@@ -353,11 +353,11 @@ class MMBertForPretraining(BertForPreTraining):
             
             outputs += (text_prediction_scores, text_seq_relationship_score)
             
-            if text_masked_lm_labels is not None and text_next_sentence_label is not None:
+            if text_masked_lm_labels is not None:
                 loss_fct = torch.nn.CrossEntropyLoss()
                 masked_lm_loss = loss_fct(text_prediction_scores.view(-1,self.config.vocab_size),text_masked_lm_labels.view(-1))
-                next_sentence_loss = loss_fct(text_seq_relationship_score.view(-1,2), text_next_sentence_label.view(-1))
-                total_loss = masked_lm_loss + next_sentence_loss
+                #next_sentence_loss = loss_fct(text_seq_relationship_score.view(-1,2), text_next_sentence_label.view(-1))
+                total_loss = masked_lm_loss
                 text_loss = total_loss
                 
         if visual_input_ids is not None:

@@ -46,7 +46,7 @@ def make_date_dir(path):
 
     while os.path.exists(os.path.join(path, name)):
         i += 1
-    
-    name = today.strftime('%Y%m%d')+'-'+'%02d' % i
+        name = today.strftime('%Y%m%d')+'-'+'%02d' % i
+        
     os.mkdir(os.path.join(path, name))
     return os.path.join(path, name)   
