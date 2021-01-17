@@ -411,5 +411,5 @@ class MMBertForPretraining(BertForPreTraining):
         if text_loss is not None and visual_loss is not None and speech_loss is not None:
             joint_loss = ((text_loss + visual_loss + speech_loss)/3.0) + label_loss
             outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + outputs
-            
+        logits = torch.argmax(self.softmax(logits))
         return outputs,logits

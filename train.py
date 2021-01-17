@@ -34,7 +34,7 @@ parser.add_argument("--learning_rate",type=float,default=1e-6)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=100)
 parser.add_argument("--train_batch_size",type=int,default=6)
-parser.add_argument("--val_batch_size",type=int,default=4)
+parser.add_argument("--val_batch_size",type=int,default=1)
 parser.add_argument("--test_batch_size",type=int,default=1)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
 parser.add_argument("--mlm",type=bool,default=True)
@@ -405,6 +405,8 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
     valDataloader = DataLoader(
         valDataset, sampler=valSampler, batch_size=args.val_batch_size, collate_fn = model_utils.collate
     )
+    preds = []
+    labels = []
     with torch.no_grad():
         for step, batch in enumerate(tqdm(valDataloader,desc="Iteration")):
             batch = tuple(t.to(DEVICE) for t in batch)
@@ -416,7 +418,7 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
             visual_inputs, visual_mask_labels = mask_tokens(visual_ids,tokenizer,args) if args.mlm else (visual_ids, visual_ids)
             speech_inputs, speech_mask_labels = mask_tokens(speech_ids,tokenizer,args) if args.mlm else (speech_ids, speech_ids)
 
-            outputs,_ = model(
+            outputs,logits = model(
                 text_input_ids = text_inputs,
                 visual_input_ids = visual_inputs,
                 speech_input_ids = speech_inputs,
@@ -429,7 +431,7 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
                 text_masked_lm_labels = text_mask_labels,
                 visual_masked_lm_labels = visual_mask_labels,
                 speech_masked_lm_labels = speech_mask_labels,
-                text_next_sentence_label = text_label,
+                text_next_sentence_label = None,
                 visual_next_sentence_label = visual_label,
                 speech_next_sentence_label = speech_label,
                 text_sentiment = text_sentiment,
@@ -437,12 +439,20 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
                 speech_sentiment = speech_sentiment,
             )
 
+            logits = logits.detach().cpu().numpy()
+            label_ids = text_sentiment.detach().cpu().numpy()
             loss = outputs[0]
 
             dev_loss += loss.mean().item()
             nb_dev_steps +=1
 
-    return dev_loss / nb_dev_steps
+            preds.extend(logits)
+            labels.extend(label_ids)
+
+        preds = np.array(preds)
+        labels = np.array(labels)           
+
+    return dev_loss / nb_dev_steps,preds,labels
 
 
 def test_epoch(model,testDataloader):
@@ -490,44 +500,32 @@ def test_epoch(model,testDataloader):
             logits = logits.detach().cpu().numpy()
             label_ids = text_sentiment.detach().cpu().numpy()
 
-            logits = np.squeeze(logits).tolist()
-
             preds.extend(logits)
             labels.extend(label_ids)
-
         preds = np.array(preds)
         labels = np.array(labels)
 
     return preds, labels
 
-def test_score_model(model,testDataset):
+def test_score_model(preds,y_test):
     """
-        Input = model : MMBertForPretraining, traindata : torch.utils.data.Dataset
+        Input = model : MMBertForPretraining, testDataset : torch.utils.data.Dataset
         
         Using model's prediction, cal MAE, ACC, F_score
 
         return acc, MAE, F_score
     """
 
-    testSampler = RandomSampler(testDataset)
-    testDataloader = DataLoader(
-        testDataset, sampler=testSampler, batch_size=args.test_batch_size, collate_fn = model_utils.collate
-    )    
+    # testSampler = RandomSampler(testDataset)
+    # testDataloader = DataLoader(
+    #     testDataset, sampler=testSampler, batch_size=args.test_batch_size, collate_fn = model_utils.collate
+    # )    
 
-    preds, y_test = test_epoch(model,testDataloader)
-
-    non_zeros = np.array(
-        [i for i, e in enumerate(y_test) if e != 0 or False])
-
-    preds = preds[non_zeros]
-    y_test = y_test[non_zeros]
+    # preds, y_test = test_epoch(model,testDataloader)
 
     #MAE
     mae = np.mean(np.absolute(preds - y_test))
     #corr = np.corrcoef(preds, y_test)[0][1]
-
-    preds = preds >= 0
-    y_test = y_test >= 0
 
     f_score = f1_score(y_test, preds, average="weighted")
     acc = accuracy_score(y_test, preds)
@@ -557,11 +555,11 @@ def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenize
         logger.info("[Train Epoch {}] Loss : {}".format(epoch+1,train_loss))
 
         logger.info("=====================Valid======================")
-        valid_loss = eval_epoch(model,valDataset,optimizer,scheduler,tokenizer)
+        valid_loss,preds,labels = eval_epoch(model,valDataset,optimizer,scheduler,tokenizer)
         logger.info("[Val Epoch {}] Loss : {}".format(epoch+1,valid_loss))
 
         logger.info("=====================Test======================")
-        test_acc,test_mae,test_f_score = test_score_model(model,testDataset)
+        test_acc,test_mae,test_f_score = test_score_model(preds,labels)
 
         logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_f_score))
 
