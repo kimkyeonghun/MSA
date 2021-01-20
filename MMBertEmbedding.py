@@ -37,8 +37,13 @@ class JointEmbeddings(nn.Module):
         return embeddings
 
 class FuseGate(nn.Module):
-    def __init__(self,hidden_size,dropout_prob):
+    def __init__(self,hidden_size,dropout_prob,dataset):
         super().__init__()
+
+        if dataset =='mosi':
+            VISUALDIM = MOSIVISUALDIM
+        elif dataset =='mosei':
+            VISUALDIM = MOSEIVISUALDIM
 
         self.Wv = nn.Linear(VISUALDIM,1)
         self.Ws = nn.Linear(SPEECHDIM,1)

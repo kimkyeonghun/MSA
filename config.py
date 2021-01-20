@@ -7,5 +7,6 @@ total_vocab_size = 30522
 
 #modlity dimension
 TEXTDIM = 768
-VISUALDIM = 35
+MOSEIVISUALDIM = 35
+MOSIVISUALDIM = 47
 SPEECHDIM = 74

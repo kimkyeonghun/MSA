@@ -16,7 +16,7 @@ class MMBertModel(BertPreTrainedModel):
     def __init__(self,config):
         super().__init__(config)
         self.config = config
-        self.jointEmbeddings = JointEmbeddings(config.hidden_size,0.5)
+        #self.jointEmbeddings = JointEmbeddings(config.hidden_size,0.5)
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
@@ -311,10 +311,9 @@ class MMBertForPretraining(BertForPreTraining):
         self.cls = MMBertPreTrainingHeads(config)
         self.bert = MMBertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size*3,2)
+        self.num_labels = config._num_labels
+        self.classifier = nn.Linear(config.hidden_size*3,self.num_labels)
         self.softmax = nn.Softmax(dim=1)
-
-        self.num_labels = 2
         
         #?
         self.init_weights()
@@ -401,15 +400,15 @@ class MMBertForPretraining(BertForPreTraining):
             if self.num_labels == 1:
                 #  We are doing regression
                 loss_fct = torch.nn.MSELoss()
-                loss = loss_fct(logits.view(-1), text_sentiment.view(-1))
+                label_loss = loss_fct(logits.view(-1), text_sentiment.view(-1))
             else:
                 loss_fct = torch.nn.CrossEntropyLoss()
                 label_loss = loss_fct(
                     logits, text_sentiment
                     )
+                logits = torch.argmax(self.softmax(logits))
 
         if text_loss is not None and visual_loss is not None and speech_loss is not None:
             joint_loss = ((text_loss + visual_loss + speech_loss)/3.0) + label_loss
             outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + outputs
-        logits = torch.argmax(self.softmax(logits))
         return outputs,logits

@@ -145,10 +145,10 @@ def save(train, val, test, datasetName):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--textField",type=str,required=True)
-    parser.add_argument("--visualField",type=str,required=True)
-    parser.add_argument("--speechField",type=str,required=True)
-    parser.add_argument("--labelField",type=str,required=True)
+    parser.add_argument("--textField",type=str,default='CMU_MOSI_ModifiedTimestampedWords')
+    parser.add_argument("--visualField",type=str,default='CMU_MOSI_Visual_Facet_41')
+    parser.add_argument("--speechField",type=str,default='CMU_MOSI_COVAREP')
+    parser.add_argument("--labelField",type=str,default='CMU_MOSI_Opinion_Labels')
     parser.add_argument("--datasetName",type=str,required=True)
 
     args = parser.parse_args()

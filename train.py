@@ -20,7 +20,7 @@ from transformers.optimization import AdamW
 from MMBertDataset import MMBertDataset
 #To modify model name MMBertForPretraining -> MMBertForPreTraining
 from MMBertForPretraining import MMBertForPretraining
-from config import DEVICE, VISUALDIM, SPEECHDIM
+from config import DEVICE, MOSEIVISUALDIM, MOSIVISUALDIM, SPEECHDIM
 import config
 import utils
 import model_utils
@@ -43,6 +43,15 @@ parser.add_argument("--max_seq_length",type=int, default = 200)
 
 args = parser.parse_args()
 
+if args.dataset == 'mosi':
+    VISUALDIM = MOSIVISUALDIM
+    collate_fun = model_utils.collate
+    num_label = 1
+else:
+    VISUALDIM = MOSEIVISUALDIM
+    collate_fun = model_utils.mosei_collate
+    num_label = 2
+
 logger, log_dir = utils.get_logger(os.path.join('./logs'))
 
 def prepareForTraining(numTrainOptimizationSteps):
@@ -59,7 +68,7 @@ def prepareForTraining(numTrainOptimizationSteps):
 
         return model : class MMBertForPretraining, optimizer : Admaw, scheduler : warmup_start
     """
-    model = MMBertForPretraining.from_pretrained(args.model, num_labels=2)
+    model = MMBertForPretraining.from_pretrained(args.model, num_labels=num_label)
     model = torch.nn.DataParallel(model)
     
     model.to(DEVICE)
@@ -200,7 +209,7 @@ def makeDataset(data):
     features = convertTofeatures(data,tokenizer)
 
     #Need to modify
-    dataset = MMBertDataset(tokenizer,features)
+    dataset = MMBertDataset(tokenizer,features,args.dataset)
     
     return dataset, tokenizer
 
@@ -301,7 +310,7 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
     #Make Dataloader
     trainSampler = RandomSampler(traindata)
     trainDataloader = DataLoader(
-        traindata, sampler=trainSampler, batch_size=args.train_batch_size, collate_fn=model_utils.collate
+        traindata, sampler=trainSampler, batch_size=args.train_batch_size, collate_fn=collate_fun
     )
 
     #Train
@@ -403,7 +412,7 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
 
     valSampler = RandomSampler(valDataset)
     valDataloader = DataLoader(
-        valDataset, sampler=valSampler, batch_size=args.val_batch_size, collate_fn = model_utils.collate
+        valDataset, sampler=valSampler, batch_size=args.val_batch_size, collate_fn = collate_fun
     )
     preds = []
     labels = []
@@ -454,59 +463,6 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
 
     return dev_loss / nb_dev_steps,preds,labels
 
-
-def test_epoch(model,testDataloader):
-    """
-        Input = model : MMBertForPretraining, testdata : torch.utils.data.Dataloader
-        Do test model in set epoch.
-
-        After finishing padding, get outputs using model.
-
-        return predict and true
-    """
-    model.eval()
-    preds = []
-    labels = []
-
-    with torch.no_grad():
-        for batch in tqdm(testDataloader):
-            batch = tuple(t.to(DEVICE) for t in batch)
-
-            text_ids,text_label,text_token_type_ids,text_attention_masks,text_sentiment = batch[0],batch[1],batch[2].long(),batch[3],batch[4]
-            visual_ids,visual_label,visual_token_type_ids,visual_attention_masks,visual_sentiment = batch[5],batch[6],batch[7].long(),batch[8],batch[9]
-            speech_ids,speech_label,speech_token_type_ids,speech_attention_masks,speech_sentiment = batch[10],batch[11],batch[12].long(),batch[13],batch[14]
-
-            outputs,logits = model(
-                text_input_ids = text_ids,
-                visual_input_ids = visual_ids,
-                speech_input_ids = speech_ids,
-                text_token_type_ids = text_token_type_ids,
-                visual_token_type_ids = visual_token_type_ids,
-                speech_token_type_ids = speech_token_type_ids,
-                text_attention_mask = text_attention_masks,
-                visual_attention_mask = visual_attention_masks,
-                speech_attention_mask = speech_attention_masks,
-                text_masked_lm_labels = None,
-                visual_masked_lm_labels = None,
-                speech_masked_lm_labels = None,
-                text_next_sentence_label = None,
-                visual_next_sentence_label = None,
-                speech_next_sentence_label = None,
-                text_sentiment = text_sentiment,
-                visual_sentiment = visual_sentiment,
-                speech_sentiment = speech_sentiment,
-            )
-
-            logits = logits.detach().cpu().numpy()
-            label_ids = text_sentiment.detach().cpu().numpy()
-
-            preds.extend(logits)
-            labels.extend(label_ids)
-        preds = np.array(preds)
-        labels = np.array(labels)
-
-    return preds, labels
-
 def test_score_model(preds,y_test):
     """
         Input = model : MMBertForPretraining, testDataset : torch.utils.data.Dataset
@@ -524,6 +480,7 @@ def test_score_model(preds,y_test):
     # preds, y_test = test_epoch(model,testDataloader)
 
     #MAE
+    print(preds,y_test)
     mae = np.mean(np.absolute(preds - y_test))
     #corr = np.corrcoef(preds, y_test)[0][1]
 
@@ -532,6 +489,23 @@ def test_score_model(preds,y_test):
 
     return acc, mae, f_score
 
+def test_mosi_score_model(preds,y_test, use_zero=False):
+
+    non_zeros = np.array(
+        [i for i, e in enumerate(y_test) if e != 0 or use_zero])
+
+    preds = preds[non_zeros]
+    y_test = y_test[non_zeros]
+
+    mae = np.mean(np.absolute(preds - y_test))
+
+    preds = preds >= 0
+    y_test = y_test >= 0
+
+    f_score = f1_score(y_test, preds, average="weighted")
+    acc = accuracy_score(y_test, preds)
+
+    return acc, mae, f_score
 
 def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenizer):
     """
@@ -545,7 +519,7 @@ def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenize
     model_save_path = utils.make_date_dir("./model_save")
     logger.info("Model save path: {}".format(model_save_path))
 
-    best_acc = 0
+    best_loss = float('inf')
     patience = 0
     for epoch in range(int(args.n_epochs)):
         patience += 1
@@ -559,13 +533,16 @@ def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenize
         logger.info("[Val Epoch {}] Loss : {}".format(epoch+1,valid_loss))
 
         logger.info("=====================Test======================")
-        test_acc,test_mae,test_f_score = test_score_model(preds,labels)
+        if args.dataset == 'mosi':
+            test_acc,test_mae,test_f_score = test_mosi_score_model(preds,labels)
+        else:
+            test_acc,test_mae,test_f_score = test_score_model(preds,labels)
 
         logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_f_score))
 
-        if test_acc > best_acc:
+        if valid_loss < best_loss:
             torch.save(model.state_dict(),os.path.join(model_save_path,'model_'+str(epoch+1)+".pt"))
-            best_acc = test_acc
+            best_loss = valid_loss
             patience = 0
 
         val_losses.append(valid_loss)
