@@ -20,6 +20,7 @@ from transformers.optimization import AdamW
 from MMBertDataset import MMBertDataset
 #To modify model name MMBertForPretraining -> MMBertForPreTraining
 from MMBertForPretraining import MMBertForPretraining
+from MMBertEmbedding import FuseGate
 from config import DEVICE, MOSEIVISUALDIM, MOSIVISUALDIM, SPEECHDIM
 import config
 import utils
@@ -47,6 +48,8 @@ if args.dataset == 'mosi':
     VISUALDIM = MOSIVISUALDIM
 else:
     VISUALDIM = MOSEIVISUALDIM
+
+FG = FuseGate(1,0.5,args.dataset)
 
 logger, log_dir = utils.get_logger(os.path.join('./logs'))
 
@@ -104,13 +107,10 @@ def prepare_inputs(tokens, visual, speech, tokenizer):
 
     """
     #Need new visual and speech sep token
-    visual_sep = np.zeros((1,VISUALDIM))
-    visual = np.concatenate((visual_sep,visual,visual_sep))
+    input_ids = torch.tensor(tokenizer.convert_tokens_to_ids(tokens),dtype=torch.float).unsqueeze(-1)
+    visual = FG(input_ids,torch.tensor(visual),'visual').detach().cpu().numpy()
+    speech = FG(torch.tensor(input_ids,dtype=torch.float),torch.tensor(speech),'speech').detach().cpu().numpy()
 
-    speech_sep = np.zeros((1,SPEECHDIM))
-    speech = np.concatenate((speech_sep,speech,speech_sep))
-
-    input_ids = tokenizer.convert_tokens_to_ids(tokens)
     input_mask = [1] * len(input_ids)
 
     return input_ids, visual, speech, input_mask
@@ -166,7 +166,11 @@ def convertTofeatures(samples,tokenizer):
 
         #padding
         input_ids,visual,speech,input_mask = prepare_inputs(tokens,visual,speech,tokenizer)
-        
+        try:
+            input_ids.detach().numpy().squeeze().shape[0]
+        except:
+            continue
+
         features.append(
             ((input_ids,visual,speech,input_mask),
             label,
@@ -330,7 +334,7 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         
         #Make tensor cpu to cuda
         text_inputs = text_inputs.to(DEVICE)
-        text_mask_labels = text_mask_labels.to(DEVICE)
+        text_mask_labels = text_mask_labels.to(DEVICE).long()
         text_label = text_label.to(DEVICE)
 
         visual_inputs = visual_inputs.to(DEVICE)
@@ -473,7 +477,7 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
                 text_attention_mask = text_attention_masks,
                 visual_attention_mask = visual_attention_masks,
                 speech_attention_mask = speech_attention_masks,
-                text_masked_lm_labels = text_mask_labels,
+                text_masked_lm_labels = text_mask_labels.long(),
                 visual_masked_lm_labels = visual_mask_labels,
                 speech_masked_lm_labels = speech_mask_labels,
                 text_next_sentence_label = None,
