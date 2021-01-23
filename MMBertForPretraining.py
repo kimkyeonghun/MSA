@@ -313,6 +313,8 @@ class MMBertForPretraining(BertForPreTraining):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.num_labels = config._num_labels
         self.classifier = nn.Linear(config.hidden_size*3,self.num_labels)
+        self.classifier2 = nn.Linear(config.hidden_size*2,self.num_labels)
+        self.classifier3 = nn.Linear(config.hidden_size*1,self.num_labels)
         self.softmax = nn.Softmax(dim=1)
         
         #?
@@ -342,6 +344,9 @@ class MMBertForPretraining(BertForPreTraining):
         text_loss = None
         visual_loss = None
         speech_loss = None
+        text_pooled_output = None 
+        visual_pooled_output = None
+        speech_pooled_output = None
 
         if text_input_ids is not None:
             (text_prediction_scores, text_seq_relationship_score), text_pooled_output = self.get_bert_output(
@@ -392,9 +397,41 @@ class MMBertForPretraining(BertForPreTraining):
                 total_loss = masked_lm_loss+next_sentence_loss
                 speech_loss = total_loss
         
-        pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=-1)
-        pooled_output = self.dropout(pooled_output)
-        logits = self.classifier(pooled_output)
+        if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is not None:
+            pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=-1)
+            pooled_output = self.dropout(pooled_output)
+            logits = self.classifier(pooled_output)
+            mlm_loss = (text_loss + visual_loss + speech_loss)/3.0
+        elif text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is None:
+            pooled_output = torch.cat((text_pooled_output,visual_pooled_output),dim=-1)
+            pooled_output = self.dropout(pooled_output)
+            logits = self.classifier2(pooled_output)
+            mlm_loss = (text_loss + visual_loss)/2.0
+        elif text_pooled_output is not None and visual_pooled_output is None and speech_pooled_output is not None:
+            pooled_output = torch.cat((text_pooled_output,speech_pooled_output),dim=-1)
+            pooled_output = self.dropout(pooled_output)
+            logits = self.classifier2(pooled_output)
+            mlm_loss = (text_loss + speech_loss)/2.0
+        elif text_pooled_output is None and visual_pooled_output is not None and speech_pooled_output is not None:
+            pooled_output = torch.cat((visual_pooled_output,speech_pooled_output),dim=-1)
+            pooled_output = self.dropout(pooled_output)
+            logits = self.classifier2(pooled_output)
+            mlm_loss = (visual_loss + speech_loss)/2.0
+        elif text_pooled_output is not None and visual_pooled_output is None and speech_pooled_output is None:
+            pooled_output = text_pooled_output
+            pooled_output = self.dropout(pooled_output)
+            logits = self.classifier3(pooled_output)
+            mlm_loss = (text_loss)/1.0
+        elif text_pooled_output is None and visual_pooled_output is not None and speech_pooled_output is None:
+            pooled_output = visual_pooled_output
+            pooled_output = self.dropout(pooled_output)
+            logits = self.classifier3(pooled_output)
+            mlm_loss = (visual_loss)/1.0
+        elif text_pooled_output is None and visual_pooled_output is None and speech_pooled_output is not None:
+            pooled_output = speech_pooled_output
+            pooled_output = self.dropout(pooled_output)
+            logits = self.classifier3(pooled_output)
+            mlm_loss = (speech_loss)/1.0
 
         if text_sentiment is not None:
             if self.num_labels == 1:
@@ -408,7 +445,6 @@ class MMBertForPretraining(BertForPreTraining):
                     )
                 logits = torch.argmax(self.softmax(logits))
 
-        if text_loss is not None and visual_loss is not None and speech_loss is not None:
-            joint_loss = ((text_loss + visual_loss + speech_loss)/3.0) + label_loss
-            outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + outputs
+        joint_loss = mlm_loss + label_loss
+        outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + outputs
         return outputs,logits

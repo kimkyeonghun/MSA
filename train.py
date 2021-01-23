@@ -45,12 +45,8 @@ args = parser.parse_args()
 
 if args.dataset == 'mosi':
     VISUALDIM = MOSIVISUALDIM
-    collate_fun = model_utils.collate
-    num_label = 1
 else:
     VISUALDIM = MOSEIVISUALDIM
-    collate_fun = model_utils.mosei_collate
-    num_label = 2
 
 logger, log_dir = utils.get_logger(os.path.join('./logs'))
 
@@ -68,7 +64,7 @@ def prepareForTraining(numTrainOptimizationSteps):
 
         return model : class MMBertForPretraining, optimizer : Admaw, scheduler : warmup_start
     """
-    model = MMBertForPretraining.from_pretrained(args.model, num_labels=num_label)
+    model = MMBertForPretraining.from_pretrained(args.model, num_labels=2)
     model = torch.nn.DataParallel(model)
     
     model.to(DEVICE)
@@ -310,12 +306,16 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
     #Make Dataloader
     trainSampler = RandomSampler(traindata)
     trainDataloader = DataLoader(
-        traindata, sampler=trainSampler, batch_size=args.train_batch_size, collate_fn=collate_fun
+        traindata, sampler=trainSampler, batch_size=args.train_batch_size, collate_fn=model_utils.collate
     )
 
     #Train
     epochs_trained = 0
     train_loss = 0.0
+    text_loss = 0.0
+    visual_loss = 0.0
+    speech_loss = 0.0
+    label_loss = 0.0
     nb_tr_steps = 0
     model.train()
     for step, batch in enumerate(tqdm(trainDataloader,desc="Iteration")):
@@ -375,13 +375,45 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
             speech_sentiment = speech_sentiment,
         )
 
+        # outputs,_ = model(
+        #     text_input_ids = None,
+        #     visual_input_ids = visual_inputs,
+        #     speech_input_ids = None,
+        #     text_token_type_ids = None,
+        #     visual_token_type_ids = visual_token_type_ids,
+        #     speech_token_type_ids = None,
+        #     text_attention_mask = None,
+        #     visual_attention_mask = visual_attention_masks,
+        #     speech_attention_mask = None,
+        #     text_masked_lm_labels = None,
+        #     visual_masked_lm_labels = visual_mask_labels,
+        #     speech_masked_lm_labels = None,
+        #     text_next_sentence_label = None,
+        #     visual_next_sentence_label = visual_label,
+        #     speech_next_sentence_label = None,
+        #     text_sentiment = text_sentiment,
+        #     visual_sentiment = None,
+        #     speech_sentiment = None,
+        # )
+
         #Need to check
         loss = outputs[0]
-        text_loss = outputs[1]
+        T_loss = outputs[1]
+        V_loss = outputs[2]
+        S_loss = outputs[3]
+        L_loss = outputs[4]
 
         loss.mean().backward()
 
         train_loss += loss.mean().item()
+        if T_loss is not None:
+            text_loss += T_loss.mean().item()
+        if V_loss is not None:
+            visual_loss += V_loss.mean().item()
+        if S_loss is not None:
+            speech_loss += S_loss.mean().item()
+
+        label_loss += L_loss.mean().item()
         nb_tr_steps +=1
 
         if (step + 1)& args.gradient_accumulation_step == 0:
@@ -389,7 +421,7 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
             scheduler.step()
             optimizer.zero_grad()
         
-    return train_loss / nb_tr_steps
+    return train_loss / nb_tr_steps, text_loss / nb_tr_steps ,visual_loss / nb_tr_steps , speech_loss / nb_tr_steps , label_loss / nb_tr_steps
 
 def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
     """
@@ -408,11 +440,15 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
 
     model.eval()
     dev_loss = 0
+    text_loss = 0.0
+    visual_loss = 0.0
+    speech_loss = 0.0
+    label_loss = 0.0
     nb_dev_examples,nb_dev_steps = 0,0
 
     valSampler = RandomSampler(valDataset)
     valDataloader = DataLoader(
-        valDataset, sampler=valSampler, batch_size=args.val_batch_size, collate_fn = collate_fun
+        valDataset, sampler=valSampler, batch_size=args.val_batch_size, collate_fn = model_utils.collate
     )
     preds = []
     labels = []
@@ -448,9 +484,34 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
                 speech_sentiment = speech_sentiment,
             )
 
+            # outputs,logits = model(
+            #     text_input_ids = None,
+            #     visual_input_ids = visual_inputs,
+            #     speech_input_ids = None,
+            #     text_token_type_ids = None,
+            #     visual_token_type_ids = visual_token_type_ids,
+            #     speech_token_type_ids = None,
+            #     text_attention_mask = None,
+            #     visual_attention_mask = visual_attention_masks,
+            #     speech_attention_mask = None,
+            #     text_masked_lm_labels = None,
+            #     visual_masked_lm_labels = visual_mask_labels,
+            #     speech_masked_lm_labels = None,
+            #     text_next_sentence_label = None,
+            #     visual_next_sentence_label = visual_label,
+            #     speech_next_sentence_label = None,
+            #     text_sentiment = text_sentiment,
+            #     visual_sentiment = None,
+            #     speech_sentiment = None,
+            # )
+
             logits = logits.detach().cpu().numpy()
             label_ids = text_sentiment.detach().cpu().numpy()
             loss = outputs[0]
+            T_loss = outputs[1]
+            V_loss = outputs[2]
+            S_loss = outputs[3]
+            L_loss = outputs[4]
 
             dev_loss += loss.mean().item()
             nb_dev_steps +=1
@@ -458,31 +519,30 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
             preds.extend(logits)
             labels.extend(label_ids)
 
+            if T_loss is not None:
+                text_loss += T_loss.mean().item()
+            if V_loss is not None:
+                visual_loss += V_loss.mean().item()
+            if S_loss is not None:
+                speech_loss += S_loss.mean().item()
+
+            label_loss += L_loss.mean().item()
+
         preds = np.array(preds)
         labels = np.array(labels)           
 
-    return dev_loss / nb_dev_steps,preds,labels
+    return dev_loss / nb_dev_steps, text_loss / nb_dev_steps ,visual_loss / nb_dev_steps , speech_loss / nb_dev_steps , label_loss / nb_dev_steps, preds,labels
 
 def test_score_model(preds,y_test):
     """
-        Input = model : MMBertForPretraining, testDataset : torch.utils.data.Dataset
+        Input = preds, y_test
         
-        Using model's prediction, cal MAE, ACC, F_score
+        Using model's prediction, cal MAE, ACC, F_score in mosei dataset
 
         return acc, MAE, F_score
     """
-
-    # testSampler = RandomSampler(testDataset)
-    # testDataloader = DataLoader(
-    #     testDataset, sampler=testSampler, batch_size=args.test_batch_size, collate_fn = model_utils.collate
-    # )    
-
-    # preds, y_test = test_epoch(model,testDataloader)
-
     #MAE
-    print(preds,y_test)
     mae = np.mean(np.absolute(preds - y_test))
-    #corr = np.corrcoef(preds, y_test)[0][1]
 
     f_score = f1_score(y_test, preds, average="weighted")
     acc = accuracy_score(y_test, preds)
@@ -490,12 +550,18 @@ def test_score_model(preds,y_test):
     return acc, mae, f_score
 
 def test_mosi_score_model(preds,y_test, use_zero=False):
+    """
+        Input = preds, y_test
+        
+        Using model's prediction, cal MAE, ACC, F_score in mosi dataset
 
-    non_zeros = np.array(
-        [i for i, e in enumerate(y_test) if e != 0 or use_zero])
+        return acc, MAE, F_score
+    """
+    # non_zeros = np.array(
+    #     [i for i, e in enumerate(y_test) if e != 0 or use_zero])
 
-    preds = preds[non_zeros]
-    y_test = y_test[non_zeros]
+    # preds = preds[non_zeros]
+    # y_test = y_test[non_zeros]
 
     mae = np.mean(np.absolute(preds - y_test))
 
@@ -520,23 +586,21 @@ def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenize
     logger.info("Model save path: {}".format(model_save_path))
 
     best_loss = float('inf')
+    best_acc = 0
     patience = 0
     for epoch in range(int(args.n_epochs)):
         patience += 1
 
         logger.info("=====================Train======================")
-        train_loss = train_epoch(model,trainDataset,optimizer,scheduler,tokenizer)
-        logger.info("[Train Epoch {}] Loss : {}".format(epoch+1,train_loss))
+        train_loss,text_loss,visual_loss,speech_loss,label_loss = train_epoch(model,trainDataset,optimizer,scheduler,tokenizer)
+        logger.info("[Train Epoch {}] Joint Loss : {} Text Loss : {} Visual Loss : {} Speech Loss : {} Label Loss : {}".format(epoch+1,train_loss,text_loss,visual_loss,speech_loss,label_loss))
 
         logger.info("=====================Valid======================")
-        valid_loss,preds,labels = eval_epoch(model,valDataset,optimizer,scheduler,tokenizer)
-        logger.info("[Val Epoch {}] Loss : {}".format(epoch+1,valid_loss))
+        valid_loss,text_loss,visual_loss,speech_loss,label_loss,preds,labels = eval_epoch(model,valDataset,optimizer,scheduler,tokenizer)
+        logger.info("[Val Epoch {}] Joint Loss : {} Text Loss : {} Visual Loss : {} Speech Loss : {} Label Loss : {}".format(epoch+1,valid_loss,text_loss,visual_loss,speech_loss,label_loss))
 
         logger.info("=====================Test======================")
-        if args.dataset == 'mosi':
-            test_acc,test_mae,test_f_score = test_mosi_score_model(preds,labels)
-        else:
-            test_acc,test_mae,test_f_score = test_score_model(preds,labels)
+        test_acc,test_mae,test_f_score = test_score_model(preds,labels)
 
         logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_f_score))
 
@@ -547,7 +611,7 @@ def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenize
 
         val_losses.append(valid_loss)
         test_accuracy.append(test_acc)
-        if patience == 7:
+        if patience == 10:
             break
 
 

@@ -53,8 +53,8 @@ class FuseGate(nn.Module):
 
     def forward(self,jointSentence,mode):
         if mode == 'visual':
-            outputs = torch.cat((jointSentence[0],F.relu(self.Wv(jointSentence[1]))))
+            outputs = torch.cat((jointSentence[0],jointSentence[0]+F.relu(self.Wv(jointSentence[1]))))
         elif mode == 'speech':
-            outputs = torch.cat((jointSentence[0],F.relu(self.Ws(jointSentence[1]))))
+            outputs = torch.cat((jointSentence[0],jointSentence[0]+F.relu(self.Ws(jointSentence[1]))))
 
         return outputs

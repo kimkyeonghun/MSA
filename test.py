@@ -19,7 +19,7 @@ from MMBertDataset import MMBertDataset
 #To modify model name MMBertForPretraining -> MMBertForPreTraining
 from MMBertForPretraining import MMBertForPretraining
 
-from config import DEVICE, VISUALDIM, SPEECHDIM
+from config import DEVICE, MOSEIVISUALDIM, MOSIVISUALDIM, SPEECHDIM
 import config
 import utils
 import model_utils
@@ -37,6 +37,11 @@ parser.add_argument("--dir",type=str,required=True)
 parser.add_argument("--model_num",type=str,required = True)
 parser.add_argument("--max_seq_length",type=int, default = 200)
 args = parser.parse_args()
+
+if args.dataset == 'mosi':
+    VISUALDIM = MOSIVISUALDIM
+else:
+    VISUALDIM = MOSEIVISUALDIM
 
 def prepareForTraining(numTrainOptimizationSteps):
     """
@@ -193,7 +198,7 @@ def makeDataset(data):
     features = convertTofeatures(data,tokenizer)
 
     #Need to modify
-    dataset = MMBertDataset(tokenizer,features)
+    dataset = MMBertDataset(tokenizer,features,args.dataset)
     
     return dataset, tokenizer
 
@@ -265,11 +270,8 @@ def test_score_model(model,testDataset):
 
     preds, y_test = test_epoch(model,testDataloader)
 
-    print(preds,y_test)
-
     #MAE
     mae = np.mean(np.absolute(preds - y_test))
-    #corr = np.corrcoef(preds, y_test)[0][1]
 
     f_score = f1_score(y_test, preds, average="weighted")
     acc = accuracy_score(y_test, preds)
@@ -288,8 +290,6 @@ def main():
 
     model_path = os.path.join('./model_save',args.dir,'model_'+args.model_num+'.pt')
     model.load_state_dict(torch.load(model_path,map_location=DEVICE))
-
-    preds=[];true=[]
 
     test_acc,test_mae,test_f_score = test_score_model(model,testDataset)
 

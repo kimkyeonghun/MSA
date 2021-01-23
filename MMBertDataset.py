@@ -54,26 +54,29 @@ class MMBertDataset(Dataset):
         self.dataset =dataset
         self.fuseGate = FuseGate(1,0.5,dataset)
         if self.dataset =='mosi':
-            self.mode = '1'
-            self.VISUALDIM=MOSIVISUALDIM
+            self.VISUALDIM = MOSIVISUALDIM
         elif self.dataset == 'mosei':
-            self.mode = '2'
             self.VISUALDIM = MOSEIVISUALDIM
 
     
     def sentiment_selection(self,sentiment,mode):
-        if mode == '2':
-            if torch.argmax(torch.tensor(abs(sentiment)))<3:
-                return torch.tensor([0])
-            elif torch.argmax(torch.tensor(abs(sentiment)))>=3:
-                return torch.tensor([1])
-        elif mode == '7':
-            return torch.argmax(torch.tensor(sentiment))
-        elif mode == '1':
-            """
-            mosi
-            """
-            return torch.tensor(sentiment.squeeze(),dtype=torch.float)
+        if self.dataset == 'mosei':
+            if mode == '2':
+                if torch.argmax(torch.tensor(abs(sentiment)))<3:
+                    return torch.tensor([0])
+                elif torch.argmax(torch.tensor(abs(sentiment)))>=3:
+                    return torch.tensor([1])
+            elif mode == '7':
+                return torch.argmax(torch.tensor(sentiment))
+        elif self.dataset == 'mosi':
+            if mode == '2':
+                if sentiment >=0:
+                    return torch.tensor([1])
+                else:
+                    return torch.tensor([0])
+            elif mode =='7':
+                #To be add....
+                pass
 
     def create_concat_joint_sentence(self, i, mode, max_token_len = -1):
         """
@@ -112,7 +115,7 @@ class MMBertDataset(Dataset):
             
         assert pairIndex != -1
 
-        sentiment = self.sentiment_selection(self.items[i][1][0],self.mode)
+        sentiment = self.sentiment_selection(self.items[i][1][0],"2")
 
         if i == len(self.items)-1:
             firstIndex = i
@@ -186,7 +189,7 @@ class MMBertDataset(Dataset):
         """
         firstSentence = None
         secondSentence = None
-        sentiment = self.sentiment_selection(self.items[i][1][0],self.mode)
+        sentiment = self.sentiment_selection(self.items[i][1][0],"2")
         
         if i == len(self.items)-1:
             firstSentence = self.items[i][0][0]
@@ -235,7 +238,7 @@ class MMBertDataset(Dataset):
         To be..
         """
         firstSentence = self.items[i][0][0]
-        sentiment = self.sentiment_selection(self.items[i][1][0],self.mode)
+        sentiment = self.sentiment_selection(self.items[i][1][0],"2")
         label = 0
 
         if max_token_len > 0:
@@ -271,6 +274,7 @@ class MMBertDataset(Dataset):
         text_sentence, text_label, text_token_type_ids, text_sentiment = self.create_text_sentence(i,max_token_len=75)
         tAv_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment = self.create_concat_joint_sentence(i,'visual',max_token_len = -1)
         tAs_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment = self.create_concat_joint_sentence(i,'speech',max_token_len = -1)
+        
         return text_sentence, text_label, text_token_type_ids, text_sentiment,\
          tAv_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment,\
          tAs_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment
