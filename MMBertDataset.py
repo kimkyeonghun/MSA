@@ -137,35 +137,36 @@ class MMBertDataset(Dataset):
                     secondIndex = random.choice(range(len(self.items)))
                 label = 0
         
-        textSentence = list(self.items[firstIndex][0][0].detach().numpy().squeeze())
+        #textSentence = list(self.items[firstIndex][0][0].detach().numpy().squeeze())
+        textSentence = list(self.items[firstIndex][0][0])
         pairSentence = self.items[secondIndex][0][pairIndex]
         
-        if max_token_len > 0:
-            if (len(textSentence) + len(pairSentence)) > max_token_len:
-                num_tokens_to_remove = (len(textSentence)+len(pairSentence)) - max_token_len
-                first, second, _ = self.tokenizer.truncate_sequences(
-                    ids = textSentence,
-                    pair_ids = pairSentence,
-                    num_tokens_to_remove = num_tokens_to_remove
-                )
-                textSentence = first
-                pairSentence = second
+        # if max_token_len > 0:
+        #     if (len(textSentence) + len(pairSentence)) > max_token_len:
+        #         num_tokens_to_remove = (len(textSentence)+len(pairSentence)) - max_token_len
+        #         first, second, _ = self.tokenizer.truncate_sequences(
+        #             ids = textSentence,
+        #             pair_ids = pairSentence,
+        #             num_tokens_to_remove = num_tokens_to_remove
+        #         )
+        #         textSentence = first
+        #         pairSentence = second
         
-        textTokenTypeIds = np.zeros(len(textSentence) + 1)
+        textTokenTypeIds = np.zeros(len(textSentence))
         pairTokenTypeIds = np.ones(len(pairSentence))
 
-        CLS = self.tokenizer.sep_token_id
-        SEP = self.tokenizer.sep_token_id
+        #CLS = self.tokenizer.sep_token_id
+        #SEP = self.tokenizer.sep_token_id
 
         #textSentence = torch.tensor(self.tokenizer.convert_tokens_to_ids(tokens),dtype=torch.long).unsqueeze(-1)
 
         #embedding_output = self.embeddings(textSentence,token_type_ids=torch.tensor(textTokenTypeIds,dtype=torch.long))
 
-        textSentence = torch.tensor([CLS] + textSentence,dtype=torch.float).unsqueeze(-1)
-        pairSentence = torch.tensor([SEP] + pairSentence + [SEP],dtype=torch.float)
+        #textSentence = torch.tensor([CLS] + textSentence,dtype=torch.float).unsqueeze(-1)
+        #pairSentence = torch.tensor([SEP] + pairSentence + [SEP],dtype=torch.float)
         #jointSentence = self.fuseGate((textSentence, torch.tensor(pairSentence,dtype=torch.float)),mode).squeeze(-1)
-        jointSentence = torch.cat((textSentence,pairSentence),dim=0).squeeze(-1)
-        return jointSentence, torch.tensor(label,dtype=torch.int64,device=cudas),torch.cat((
+        #jointSentence = torch.cat((textSentence,pairSentence),dim=0).squeeze(-1)
+        return textSentence,pairSentence, torch.tensor(label,dtype=torch.int64,device=cudas),torch.cat((
             torch.tensor(textTokenTypeIds,device=cudas),
             torch.tensor(pairTokenTypeIds,device=cudas))
         ), sentiment
@@ -210,16 +211,16 @@ class MMBertDataset(Dataset):
                 label = 0
             secondSentence = self.items[nextIdx][0][0]
 
-        if max_token_len > 0:
-            if (len(firstSentence) + len(secondSentence)) > max_token_len:
-                num_tokens_to_remove = (len(firstSentence)+len(secondSentence)) - max_token_len
-                first, second, _ = self.tokenizer.truncate_sequences(
-                    ids = firstSentence,
-                    pair_ids = secondSentence,
-                    num_tokens_to_remove = num_tokens_to_remove
-                )
-                firstSentence = first
-                secondSentence = second
+        # if max_token_len > 0:
+        #     if (len(firstSentence) + len(secondSentence)) > max_token_len:
+        #         num_tokens_to_remove = (len(firstSentence)+len(secondSentence)) - max_token_len
+        #         first, second, _ = self.tokenizer.truncate_sequences(
+        #             ids = firstSentence,
+        #             pair_ids = secondSentence,
+        #             num_tokens_to_remove = num_tokens_to_remove
+        #         )
+        #         firstSentence = first
+        #         secondSentence = second
         
         firstTokenTypeIds =  np.zeros(len(firstSentence)+2)
         secondTokenTypeIds =  np.ones(len(secondSentence)+1)
@@ -238,21 +239,21 @@ class MMBertDataset(Dataset):
         """
         To be..
         """
-        firstSentence = self.items[i][0][0].detach().numpy().squeeze()
+        #firstSentence = self.items[i][0][0].detach().numpy().squeeze()
+        firstSentence = self.items[i][0][0]
         sentiment = self.sentiment_selection(self.items[i][1][0],"2")
         label = 0
 
-        if max_token_len > 0:
-            if firstSentence.size > max_token_len:
-                firstSentence = firstSentence[:max_token_len-2]
+        # if max_token_len > 0:
+        #     if firstSentence.size > max_token_len:
+        #         firstSentence = firstSentence[:max_token_len-2]
         
-        firstTokenTypeIds =  np.zeros(firstSentence.size+2)
+        firstTokenTypeIds =  np.zeros(len(firstSentence))
 
         CLS = self.tokenizer.cls_token_id
         SEP = self.tokenizer.sep_token_id
         
         #jointSentences = torch.tensor([CLS]+firstSentence+[SEP]+secondSentence+[SEP],dtype= torch.long).unsqueeze(-1)
-        firstSentence = np.concatenate(([CLS],firstSentence,[SEP]))
 
         #embedding_output = self.embeddings(jointSentences,token_type_ids=torch.tensor(np.concatenate((firstTokenTypeIds,secondTokenTypeIds)),dtype=torch.long))
         return torch.tensor(firstSentence), torch.tensor(label,dtype=torch.int64,device=cudas),\
@@ -273,9 +274,9 @@ class MMBertDataset(Dataset):
     def __getitem__(self,i):
         #text_sentence, text_label, text_token_type_ids, text_sentiment = self.create_next_sentence_pair(i,max_token_len = 75)
         text_sentence, text_label, text_token_type_ids, text_sentiment = self.create_text_sentence(i,max_token_len=75)
-        tAv_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment = self.create_concat_joint_sentence(i,'visual',max_token_len = -1)
-        tAs_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment = self.create_concat_joint_sentence(i,'speech',max_token_len = -1)
+        text_sentence2,visual_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment = self.create_concat_joint_sentence(i,'visual',max_token_len = -1)
+        text_sentence3,speech_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment = self.create_concat_joint_sentence(i,'speech',max_token_len = -1)
 
         return text_sentence, text_label, text_token_type_ids, text_sentiment,\
-         tAv_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment,\
-         tAs_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment
+         text_sentence2, visual_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment,\
+         text_sentence3, speech_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment

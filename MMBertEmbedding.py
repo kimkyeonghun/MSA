@@ -5,32 +5,33 @@ import torch.nn.functional as F
 from config import *
 
 class JointEmbeddings(nn.Module):
-    def __init__(self, hidden_size, dropout_prob):
+    def __init__(self, hidden_size, dropout_prob,dataset):
         super().__init__()
 
-        self.Wv = nn.Linear(VISUALDIM,TEXTDIM)
+        if dataset =='mosi':
+            self.VISUALDIM = MOSIVISUALDIM
+        elif dataset =='mosei':
+            self.VISUALDIM = MOSEIVISUALDIM
+
+        self.Wv = nn.Linear(self.VISUALDIM,TEXTDIM)
         self.Ws = nn.Linear(SPEECHDIM,TEXTDIM)
 
         self.LayerNorm = nn.LayerNorm(hidden_size)
         self.dropout = nn.Dropout(dropout_prob)
 
-    def forward(self, input_ids , token_type_ids = None, inputs_embeds = None):
-        assert input_ids != None, "You miss input_ids"
-
-        input_shape = input_ids.size()
-
-        seq_length = input_shape[1]
-
-        if token_type_ids is None:
-            token_type_ids = torch.zeros(input_shape, dtype=torch.long, device = DEVICE)
+    def forward(self, input_embs, pair_ids , token_type_ids = None):
+        assert input_embs != None, "You miss input_embs"
+        assert pair_ids != None, "You miss pair_ids"
         
-        if inputs_embeds is None:
-            if input_shape[-1] == VISUALDIM:
-                inputs_embeds = F.relu(self.Wv(input_ids))
-            elif input_shape[-1] == SPEECHDIM:
-                inputs_embeds = F.relu(self.Ws(input_ids))
-            else:
-                raise Exception('Wrong Dimension')
+        if pair_ids.size()[-1] == self.VISUALDIM:
+            pair_embeds = F.relu(self.Wv(pair_ids.float()))
+        elif pair_ids.size()[-1] == SPEECHDIM:
+            pair_embeds = F.relu(self.Ws(pair_ids.float()))
+        else:
+            raise Exception('Wrong Dimension')
+
+        inputs_embeds = torch.cat((input_embs,pair_embeds),dim=1)
+
         embeddings = self.LayerNorm(inputs_embeds)
         embeddings = self.dropout(embeddings)
         
