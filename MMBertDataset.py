@@ -166,7 +166,7 @@ class MMBertDataset(Dataset):
         #pairSentence = torch.tensor([SEP] + pairSentence + [SEP],dtype=torch.float)
         #jointSentence = self.fuseGate((textSentence, torch.tensor(pairSentence,dtype=torch.float)),mode).squeeze(-1)
         #jointSentence = torch.cat((textSentence,pairSentence),dim=0).squeeze(-1)
-        return textSentence,pairSentence, torch.tensor(label,dtype=torch.int64,device=cudas),torch.cat((
+        return textSentence, pairSentence, torch.tensor(label,dtype=torch.int64,device=cudas),torch.cat((
             torch.tensor(textTokenTypeIds,device=cudas),
             torch.tensor(pairTokenTypeIds,device=cudas))
         ), sentiment

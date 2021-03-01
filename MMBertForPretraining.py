@@ -251,9 +251,9 @@ class MMBertModel(BertPreTrainedModel):
         
         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask,input_shape,device,joint)
         #To modify paramter
-        if joint:
-            extended_attention_mask2: torch.Tensor = self.get_extended_attention_mask(pair_mask,input_shape,device,joint)
-            extended_attention_mask = torch.cat((extended_attention_mask,extended_attention_mask2),dim=-1)
+        # if joint:
+        #     extended_attention_mask2: torch.Tensor = self.get_extended_attention_mask(pair_mask,input_shape,device,joint)
+        #     extended_attention_mask = torch.cat((extended_attention_mask,extended_attention_mask2),dim=-1)
 
         if self.config.is_decoder and encoder_hidden_states is not None:
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
@@ -390,7 +390,7 @@ class MMBertForPretraining(BertForPreTraining):
             )
             
             outputs += (visual_prediction_scores, visual_seq_relationship_score)
-            if text_masked_lm_labels is not None and visual_next_sentence_label is not None:
+            if visual_masked_lm_labels is not None and visual_next_sentence_label is not None:
                 loss_fct = torch.nn.CrossEntropyLoss()
                 masked_lm_loss = loss_fct(visual_prediction_scores.view(-1,self.config.vocab_size),visual_masked_lm_labels.view(-1).long())
                 next_sentence_loss = loss_fct(visual_seq_relationship_score.view(-1,2), visual_next_sentence_label.view(-1))
@@ -407,7 +407,7 @@ class MMBertForPretraining(BertForPreTraining):
             
             outputs += (speech_prediction_scores, speech_seq_relationship_score)
             
-            if text_masked_lm_labels is not None and speech_next_sentence_label is not None:
+            if speech_masked_lm_labels is not None and speech_next_sentence_label is not None:
                 loss_fct = torch.nn.CrossEntropyLoss()
                 masked_lm_loss = loss_fct(speech_prediction_scores.view(-1,self.config.vocab_size), speech_masked_lm_labels.view(-1).long())
                 next_sentence_loss = loss_fct(speech_seq_relationship_score.view(-1,2),speech_next_sentence_label.view(-1))
