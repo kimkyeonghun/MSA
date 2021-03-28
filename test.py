@@ -27,15 +27,17 @@ import model_utils
 
 parser= argparse.ArgumentParser()
 parser.add_argument("--dataset",type=str,choices=["mosi","mosei"],default='mosei')
+parser.add_argument("--emotion",type=str,default='sentiment')
+parser.add_argument("--num_labels",type=int,default=1)
 parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-base-uncased")
-parser.add_argument("--learning_rate",type=float,default=1e-6)
+parser.add_argument("--learning_rate",type=float,default=1e-4)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=100)
 parser.add_argument("--test_batch_size",type=int,default=1)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
 parser.add_argument("--dir",type=str,required=True)
 parser.add_argument("--model_num",type=str,required = True)
-parser.add_argument("--max_seq_length",type=int, default = 200)
+parser.add_argument("--max_seq_length",type=int, default = 100)
 args = parser.parse_args()
 
 if args.dataset == 'mosi':
@@ -57,7 +59,7 @@ def prepareForTraining(numTrainOptimizationSteps):
 
         return model : class MMBertForPretraining, optimizer : Admaw, scheduler : warmup_start
     """
-    model = MMBertForPretraining.from_pretrained(args.model, num_labels=2)
+    model = MMBertForPretraining.from_pretrained(args.model, num_labels=args.num_labels)
     model = torch.nn.DataParallel(model)
     
     model.to(DEVICE)
@@ -97,17 +99,29 @@ def prepare_inputs(tokens, visual, speech, tokenizer):
 
     """
     #Need new visual and speech sep token
-    visual_sep = np.zeros((1,VISUALDIM))
-    visual = np.concatenate((visual_sep,visual,visual_sep))
+    CLS = tokenizer.cls_token
+    SEP = tokenizer.sep_token
+    tokens = [CLS] + tokens + [SEP]
 
-    speech_sep = np.zeros((1,SPEECHDIM))
-    speech = np.concatenate((speech_sep,speech,speech_sep))
+    visual_SEP = np.zeros((1,VISUALDIM))
+    visual = np.concatenate((visual,visual_SEP))
+    speech_SEP = np.zeros((1,SPEECHDIM))
+    speech = np.concatenate((speech,speech_SEP))
 
     input_ids = tokenizer.convert_tokens_to_ids(tokens)
-    input_mask = [1] * len(input_ids)
+    input_mask = [1]*len(input_ids)
+
+    pad_len = args.max_seq_length - len(input_mask)
+    visual_padding = np.zeros((pad_len+1,VISUALDIM))
+    visual = np.concatenate((visual,visual_padding))
+    speech_padding = np.zeros((pad_len+1,SPEECHDIM))
+    speech = np.concatenate((speech,speech_padding))
+
+    padding = [0]*pad_len
+    input_ids += padding
+    input_mask += padding
 
     return input_ids, visual, speech, input_mask
-
 
 def convertTofeatures(samples,tokenizer):
     """
@@ -159,11 +173,15 @@ def convertTofeatures(samples,tokenizer):
 
         #padding
         input_ids,visual,speech,input_mask = prepare_inputs(tokens,visual,speech,tokenizer)
+        try:
+            input_ids.detach().numpy().squeeze().shape[0]
+        except:
+            pass
         
         features.append(
             ((input_ids,visual,speech,input_mask),
             label,
-            segment)
+            segment,words)
         )
     return features
 
@@ -198,7 +216,7 @@ def makeDataset(data):
     features = convertTofeatures(data,tokenizer)
 
     #Need to modify
-    dataset = MMBertDataset(tokenizer,features,args.dataset)
+    dataset = MMBertDataset(tokenizer,features,args.dataset,args.emotion)
     
     return dataset, tokenizer
 
@@ -214,19 +232,34 @@ def test_epoch(model,testDataloader):
     model.eval()
     preds = []
     labels = []
+    targets = []
 
     with torch.no_grad():
         for batch in tqdm(testDataloader):
-            batch = tuple(t.to(DEVICE) for t in batch)
+            batch = tuple(t.to(DEVICE) for t in batch[:-1])
 
-            text_ids,text_label,text_token_type_ids,text_attention_masks,text_sentiment = batch[0],batch[1],batch[2].long(),batch[3],batch[4]
-            visual_ids,visual_label,visual_token_type_ids,visual_attention_masks,visual_sentiment = batch[5],batch[6],batch[7].long(),batch[8],batch[9]
-            speech_ids,speech_label,speech_token_type_ids,speech_attention_masks,speech_sentiment = batch[10],batch[11],batch[12].long(),batch[13],batch[14]
+            text_ids, text_label, text_token_type_ids, text_attention_masks,text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
+            twv_ids, visual_ids, visual_label, visual_token_type_ids, visual_attention_masks, visual_sentiment = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
+            tws_ids, speech_ids, speech_label, speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
+            twv_attention_mask, tws_attention_mask = batch[17], batch[18]
+            rawData = batch[-1]
 
-            outputs,logits = model(
-                text_input_ids = text_ids,
+            text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if False else (text_ids,text_ids)
+            twv_ids, visual_mask_labels = mask_tokens(twv_ids,tokenizer,args) if False else (twv_ids, visual_ids)
+            tws_ids, speech_mask_labels = mask_tokens(tws_ids,tokenizer,args) if False else (tws_ids, speech_ids)
+
+            visual_mask_labels = visual_mask_labels.to(DEVICE)
+            speech_mask_labels = speech_mask_labels.to(DEVICE)
+
+            visual_attention_masks = (twv_attention_mask, visual_attention_masks)
+            speech_attention_masks = (tws_attention_mask, speech_attention_masks)
+
+            _,logits = model(
+                text_input_ids = text_inputs,
                 visual_input_ids = visual_ids,
                 speech_input_ids = speech_ids,
+                text_with_visual_ids = twv_ids,
+                text_with_speech_ids = tws_ids,
                 text_token_type_ids = text_token_type_ids,
                 visual_token_type_ids = visual_token_type_ids,
                 speech_token_type_ids = speech_token_type_ids,
@@ -240,19 +273,62 @@ def test_epoch(model,testDataloader):
                 visual_next_sentence_label = None,
                 speech_next_sentence_label = None,
                 text_sentiment = text_sentiment,
-                visual_sentiment = visual_sentiment,
-                speech_sentiment = speech_sentiment,
             )
 
             logits = logits.detach().cpu().numpy()
             label_ids = text_sentiment.detach().cpu().numpy()
-
+            rawData = rawData.detach().cpu().numpy()
+            
             preds.extend(logits)
+            targets.extend(rawData)
             labels.extend(label_ids)
         preds = np.array(preds)
         labels = np.array(labels)
+        targets = np.array(targets)
+
+        np.save('./preds',preds)
+        np.save('./y_test',labels)
+        np.save('./target',targets)
 
     return preds, labels
+
+
+def ACC7(value):
+    for i,v in enumerate(value):
+        if v < -2:
+            value[i] = -3
+        elif -2 <= v < -1:
+            value[i] = -2
+        elif -1 <= v < 0:
+            value[i] = -1
+        elif v==0:
+            value[i] = 0
+        elif 0 < v <= 1:
+            value[i] = 1
+        elif 1 < v <= 2:
+            value[i] = 2
+        elif v > 2:
+            value[i] = 3
+    return value
+
+def ACC3(preds,y_test):
+    newPreds = []
+    newYtest = []
+    for i,(p,y) in enumerate(zip(preds,y_test)):
+        if y > 0:
+            newPreds.append(1)
+            if p > 0:
+                newYtest.append(1)
+            else:
+                newYtest.append(0)
+        elif y < 0:
+            newPreds.append(0)
+            if p > 0:
+                newYtest.append(1)
+            else:
+                newYtest.append(0)
+
+    return newPreds,newYtest
 
 def test_score_model(model,testDataset):
     """
@@ -270,13 +346,24 @@ def test_score_model(model,testDataset):
 
     preds, y_test = test_epoch(model,testDataloader)
 
-    #MAE
     mae = np.mean(np.absolute(preds - y_test))
 
-    f_score = f1_score(y_test, preds, average="weighted")
-    acc = accuracy_score(y_test, preds)
+    y_test7 = ACC7(y_test)
+    preds7 = ACC7(preds)
 
-    return acc, mae, f_score
+    acc7 = accuracy_score(y_test7, preds7)
+
+    preds2 = preds >= 0
+    y_test2 = y_test >= 0
+
+    acc2 = accuracy_score(y_test2, preds2)
+    f_score = f1_score(y_test, preds, average="weighted")
+
+    preds3, y_test3 = ACC3(preds, y_test)
+
+    acc3 = accuracy_score(y_test3, preds3)
+    
+    return acc7, acc3, acc2, mae, f_score
 
 def main():
     with open("cmu_{}.pkl".format(args.dataset),'br') as fr:
@@ -290,10 +377,12 @@ def main():
 
     model_path = os.path.join('./model_save',args.dir,'model_'+args.model_num+'.pt')
     model.load_state_dict(torch.load(model_path,map_location=DEVICE))
+    
+    print("===================LOAD COMPLETE===================")
 
-    test_acc,test_mae,test_f_score = test_score_model(model,testDataset)
+    test_acc7, test_acc3, test_acc2, test_mae,test_f_score = test_score_model(model,testDataset)
 
-    print("Test_ACC : {}, Test_MAE : {}, Test_F_Score: {}".format(test_acc,test_mae,test_f_score))
+    print("Test_ACC7 : {}, Test_ACC3 : {}, Test_ACC2 : {}, Test_MAE : {}, Test_F_Score: {}".format(test_acc7,test_acc3,test_acc2,test_mae,test_f_score))
 
 if __name__== '__main__':
     main()

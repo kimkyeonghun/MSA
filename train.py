@@ -9,7 +9,6 @@ import numpy as np
 from sklearn.metrics import accuracy_score, f1_score
 
 import torch
-from torch.nn import MSELoss
 from torch.utils.data import DataLoader, RandomSampler
 
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
@@ -20,7 +19,6 @@ from transformers.optimization import AdamW
 from MMBertDataset import MMBertDataset
 #To modify model name MMBertForPretraining -> MMBertForPreTraining
 from MMBertForPretraining import MMBertForPretraining
-from MMBertEmbedding import FuseGate
 from config import DEVICE, MOSEIVISUALDIM, MOSIVISUALDIM, SPEECHDIM
 import config
 import utils
@@ -30,12 +28,14 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1'
 
 parser= argparse.ArgumentParser()
 parser.add_argument("--dataset",type=str,choices=["mosi","mosei"],default='mosei')
+parser.add_argument("--emotion",type=str,default='sentiment')
+parser.add_argument("--num_labels",type=int,default=2)
 parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-base-uncased")
 parser.add_argument("--learning_rate",type=float,default=1e-4)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=100)
-parser.add_argument("--train_batch_size",type=int,default=4)
-parser.add_argument("--val_batch_size",type=int,default=1)
+parser.add_argument("--train_batch_size",type=int,default=16)
+parser.add_argument("--val_batch_size",type=int,default=2)
 parser.add_argument("--test_batch_size",type=int,default=1)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
 parser.add_argument("--mlm",type=bool,default=True)
@@ -49,9 +49,13 @@ if args.dataset == 'mosi':
 else:
     VISUALDIM = MOSEIVISUALDIM
 
-FG = FuseGate(1,0.5,args.dataset)
-
 logger, log_dir = utils.get_logger(os.path.join('./logs'))
+
+if args.num_labels == 1:
+    test_score = test_MSE_score_model
+else:
+    test_score = test_CE_score_model
+
 
 def prepareForTraining(numTrainOptimizationSteps):
     """
@@ -67,7 +71,7 @@ def prepareForTraining(numTrainOptimizationSteps):
 
         return model : class MMBertForPretraining, optimizer : Admaw, scheduler : warmup_start
     """
-    model = MMBertForPretraining.from_pretrained(args.model, num_labels=2)
+    model = MMBertForPretraining.from_pretrained(args.model, num_labels=args.num_labels)
     model = torch.nn.DataParallel(model)
     
     model.to(DEVICE)
@@ -128,9 +132,6 @@ def prepare_inputs(tokens, visual, speech, tokenizer):
     padding = [0]*pad_len
     input_ids += padding
     input_mask += padding
-    
-    #visual = FG(input_ids,torch.tensor(visual),'visual').detach().cpu().numpy()
-    #speech = FG(torch.tensor(input_ids,dtype=torch.float),torch.tensor(speech),'speech').detach().cpu().numpy()
 
     return input_ids, visual, speech, input_mask
 
@@ -157,6 +158,9 @@ def convertTofeatures(samples,tokenizer):
     features = []
     for idx, sample in enumerate(samples):
         (words,visual,speech), label, segment = sample
+
+        # if label == 0:
+        #     continue
         
         #Tokenize
         tokens, inversions = [],[]
@@ -193,7 +197,7 @@ def convertTofeatures(samples,tokenizer):
         features.append(
             ((input_ids,visual,speech,input_mask),
             label,
-            segment)
+            segment,words)
         )
     return features
 
@@ -228,7 +232,7 @@ def makeDataset(data):
     features = convertTofeatures(data,tokenizer)
 
     #Need to modify
-    dataset = MMBertDataset(tokenizer,features,args.dataset)
+    dataset = MMBertDataset(tokenizer,features,args.dataset,args.emotion)
     
     return dataset, tokenizer
 
@@ -343,8 +347,9 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
     model.train()
     for step, batch in enumerate(tqdm(trainDataloader,desc="Iteration")):
         text_ids, text_label, text_token_type_ids, text_attention_masks,text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
-        twv_ids, visual_ids, visual_label,visual_token_type_ids, visual_attention_masks, visual_sentiment = batch[5], batch[6], batch[7], batch[8].long(), batch[9], batch[10]
-        tws_ids, speech_ids, speech_label,speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14].long(), batch[15], batch[16]
+        twv_ids, visual_ids, visual_label,visual_token_type_ids, visual_attention_masks, visual_sentiment = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
+        tws_ids, speech_ids, speech_label,speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
+        twv_attention_mask, tws_attention_mask = batch[17], batch[18]
 
         #if args.mlm is true, do masking.
         text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids,text_ids)
@@ -353,7 +358,7 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         
         #Make tensor cpu to cuda
         text_inputs = text_inputs.to(DEVICE)
-        text_mask_labels = text_mask_labels.to(DEVICE).long()
+        text_mask_labels = text_mask_labels.to(DEVICE)
         text_label = text_label.to(DEVICE)
 
         visual_inputs = visual_ids.to(DEVICE)
@@ -369,8 +374,8 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         speech_token_type_ids = speech_token_type_ids.to(DEVICE)
 
         text_attention_masks = text_attention_masks.to(DEVICE)
-        visual_attention_masks = visual_attention_masks.to(DEVICE)
-        speech_attention_masks = speech_attention_masks.to(DEVICE)
+        #visual_attention_masks = visual_attention_masks.to(DEVICE)
+        #speech_attention_masks = speech_attention_masks.to(DEVICE)
 
         text_sentiment = text_sentiment.to(DEVICE)
         visual_sentiment = visual_sentiment.to(DEVICE)
@@ -379,48 +384,29 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         twv_ids = twv_ids.to(DEVICE)
         tws_ids = tws_ids.to(DEVICE)
 
+        visual_attention_masks = (twv_attention_mask, visual_attention_masks)
+        speech_attention_masks = (tws_attention_mask, speech_attention_masks)
+
         # get outputs using model(MMbertForpretraining)
-
-        # outputs,_ = model(
-        #     text_input_ids = text_inputs,
-        #     visual_input_ids = visual_inputs,
-        #     speech_input_ids = speech_inputs,
-        #     text_with_visual_ids = twv_ids,
-        #     text_with_speech_ids = tws_ids,
-        #     text_token_type_ids = text_token_type_ids,
-        #     visual_token_type_ids = visual_token_type_ids,
-        #     speech_token_type_ids = speech_token_type_ids,
-        #     text_attention_mask = text_attention_masks,
-        #     visual_attention_mask = visual_attention_masks,
-        #     speech_attention_mask = speech_attention_masks,
-        #     text_masked_lm_labels = text_mask_labels,
-        #     visual_masked_lm_labels = visual_mask_labels,
-        #     speech_masked_lm_labels = speech_mask_labels,
-        #     text_next_sentence_label = None,
-        #     visual_next_sentence_label = visual_label,
-        #     speech_next_sentence_label = speech_label,
-        #     text_sentiment = text_sentiment,
-        # )
-
         outputs,_ = model(
-            text_input_ids = None,
+            text_input_ids = text_inputs,
             visual_input_ids = visual_inputs,
-            speech_input_ids = None,
+            speech_input_ids = speech_inputs,
             text_with_visual_ids = twv_ids,
-            text_with_speech_ids = None,
-            text_token_type_ids = None,
+            text_with_speech_ids = tws_ids,
+            text_token_type_ids = text_token_type_ids,
             visual_token_type_ids = visual_token_type_ids,
-            speech_token_type_ids = None,
+            speech_token_type_ids = speech_token_type_ids,
             text_attention_mask = text_attention_masks,
             visual_attention_mask = visual_attention_masks,
-            speech_attention_mask = None,
-            text_masked_lm_labels = None,
+            speech_attention_mask = speech_attention_masks,
+            text_masked_lm_labels = text_mask_labels,
             visual_masked_lm_labels = visual_mask_labels,
-            speech_masked_lm_labels = None,
+            speech_masked_lm_labels = speech_mask_labels,
             text_next_sentence_label = None,
             visual_next_sentence_label = visual_label,
-            speech_next_sentence_label = None,
-            text_sentiment = visual_sentiment,
+            speech_next_sentence_label = speech_label,
+            text_sentiment = text_sentiment,
         )
 
         #Need to check
@@ -481,10 +467,11 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
     labels = []
     with torch.no_grad():
         for step, batch in enumerate(tqdm(valDataloader,desc="Iteration")):
-            batch = tuple(t.to(DEVICE) for t in batch)
+            batch = tuple(t.to(DEVICE) for t in batch[:-1])
             text_ids, text_label, text_token_type_ids, text_attention_masks,text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
-            twv_ids, visual_ids, visual_label, visual_token_type_ids, visual_attention_masks, visual_sentiment = batch[5], batch[6], batch[7], batch[8].long(), batch[9], batch[10]
-            tws_ids, speech_ids, speech_label, speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14].long(), batch[15], batch[16]
+            twv_ids, visual_ids, visual_label, visual_token_type_ids, visual_attention_masks, visual_sentiment = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
+            tws_ids, speech_ids, speech_label, speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
+            twv_attention_mask, tws_attention_mask = batch[17], batch[18]
 
             text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids,text_ids)
             twv_ids, visual_mask_labels = mask_tokens(twv_ids,tokenizer,args) if args.mlm else (visual_ids, visual_ids)
@@ -493,64 +480,28 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
             visual_mask_labels = visual_mask_labels.to(DEVICE)
             speech_mask_labels = speech_mask_labels.to(DEVICE)
 
-            # print(text_inputs.shape)
-            # print(visual_ids.shape)
-            # print(speech_ids.shape)
-            # print(twv_ids.shape)
-            # print(tws_ids.shape)
-            # print(text_token_type_ids.shape)
-            # print(visual_token_type_ids.shape)
-            # print(speech_token_type_ids.shape)
-            # print(text_attention_masks.shape)
-            # print(visual_attention_masks.shape)
-            # print(speech_attention_masks.shape)
-            # print(text_mask_labels.shape)
-            # print(visual_mask_labels.shape)
-            # print(speech_mask_labels.shape)
-            # print(visual_label.shape)
-            # print(speech_label.shape)
-            # print(text_sentiment.shape)
-
-            # outputs,logits = model(
-            #     text_input_ids = text_inputs,
-            #     visual_input_ids = visual_ids,
-            #     speech_input_ids = speech_ids,
-            #     text_with_visual_ids = twv_ids,
-            #     text_with_speech_ids = tws_ids,
-            #     text_token_type_ids = text_token_type_ids,
-            #     visual_token_type_ids = visual_token_type_ids,
-            #     speech_token_type_ids = speech_token_type_ids,
-            #     text_attention_mask = text_attention_masks,
-            #     visual_attention_mask = visual_attention_masks,
-            #     speech_attention_mask = speech_attention_masks,
-            #     text_masked_lm_labels = text_mask_labels.long(),
-            #     visual_masked_lm_labels = visual_mask_labels,
-            #     speech_masked_lm_labels = speech_mask_labels,
-            #     text_next_sentence_label = None,
-            #     visual_next_sentence_label = visual_label,
-            #     speech_next_sentence_label = speech_label,
-            #     text_sentiment = text_sentiment,
-            # )
+            visual_attention_masks = (twv_attention_mask, visual_attention_masks)
+            speech_attention_masks = (tws_attention_mask, speech_attention_masks)
 
             outputs,logits = model(
-                text_input_ids = None,
+                text_input_ids = text_inputs,
                 visual_input_ids = visual_ids,
-                speech_input_ids = None,
+                speech_input_ids = speech_ids,
                 text_with_visual_ids = twv_ids,
-                text_with_speech_ids = None,
-                text_token_type_ids = None,
+                text_with_speech_ids = tws_ids,
+                text_token_type_ids = text_token_type_ids,
                 visual_token_type_ids = visual_token_type_ids,
-                speech_token_type_ids = None,
+                speech_token_type_ids = speech_token_type_ids,
                 text_attention_mask = text_attention_masks,
                 visual_attention_mask = visual_attention_masks,
-                speech_attention_mask = None,
-                text_masked_lm_labels = None,
+                speech_attention_mask = speech_attention_masks,
+                text_masked_lm_labels = text_mask_labels,
                 visual_masked_lm_labels = visual_mask_labels,
-                speech_masked_lm_labels = None,
+                speech_masked_lm_labels = speech_mask_labels,
                 text_next_sentence_label = None,
                 visual_next_sentence_label = visual_label,
-                speech_next_sentence_label = None,
-                text_sentiment = visual_sentiment,
+                speech_next_sentence_label = speech_label,
+                text_sentiment = text_sentiment,
             )
 
             logits = logits.detach().cpu().numpy()
@@ -560,6 +511,9 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
             V_loss = outputs[2]
             S_loss = outputs[3]
             L_loss = outputs[4]
+
+            #for colab
+            #logits = np.expand_dims(logits,axis=-1)
 
             dev_loss += loss.mean().item()
             nb_dev_steps +=1
@@ -581,7 +535,7 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
 
     return dev_loss / nb_dev_steps, text_loss / nb_dev_steps ,visual_loss / nb_dev_steps , speech_loss / nb_dev_steps , label_loss / nb_dev_steps, preds,labels
 
-def test_score_model(preds,y_test):
+def test_CE_score_model(preds,y_test):
     """
         Input = preds, y_test
         
@@ -594,10 +548,11 @@ def test_score_model(preds,y_test):
 
     f_score = f1_score(y_test, preds, average="weighted")
     acc = accuracy_score(y_test, preds)
+    #acc = balanced_accuracy_score(y_test, preds)
 
     return acc, mae, f_score
 
-def test_mosi_score_model(preds,y_test, use_zero=False):
+def test_MSE_score_model(preds,y_test, use_zero=False):
     """
         Input = preds, y_test
         
@@ -642,7 +597,8 @@ def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenize
         logger.info("[Val Epoch {}] Joint Loss : {} Text Loss : {} Visual Loss : {} Speech Loss : {} Label Loss : {}".format(epoch+1,valid_loss,text_loss,visual_loss,speech_loss,label_loss))
 
         logger.info("=====================Test======================")
-        test_acc,test_mae,test_f_score = test_score_model(preds,labels)
+        test_acc,test_mae,test_f_score = test_score(preds,labels)
+        #test_acc,test_mae,test_f_score = test_MSE_score_model(preds,labels)
 
         logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_f_score))
 
@@ -651,10 +607,11 @@ def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenize
             best_acc = test_acc
             patience = 0
 
-        val_losses.append(valid_loss)
-        test_accuracy.append(test_acc)
         if patience == 15:
             break
+
+        val_losses.append(valid_loss)
+        test_accuracy.append(test_acc)
 
 
 def main():

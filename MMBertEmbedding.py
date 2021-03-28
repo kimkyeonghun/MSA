@@ -42,26 +42,3 @@ class JointEmbeddings(nn.Module):
         embeddings = self.dropout(embeddings)
         
         return embeddings
-
-class FuseGate(nn.Module):
-    def __init__(self,hidden_size,dropout_prob,dataset):
-        super().__init__()
-
-        if dataset =='mosi':
-            VISUALDIM = MOSIVISUALDIM
-        elif dataset =='mosei':
-            VISUALDIM = MOSEIVISUALDIM
-
-        self.Wv = nn.Linear(1+VISUALDIM,1)
-        self.Ws = nn.Linear(1+SPEECHDIM,1)
-
-        self.LayerNorm = nn.LayerNorm(hidden_size)
-        self.dropout = nn.Dropout(dropout_prob)
-
-    def forward(self,text_sentence,pair_sentence,mode):
-        if mode == 'visual':
-            outputs = F.relu(self.Wv(torch.cat((text_sentence,pair_sentence),dim=1)))
-        elif mode == 'speech':
-            outputs = F.relu(self.Ws(torch.cat((text_sentence,pair_sentence),dim=1)))
-
-        return outputs

@@ -177,4 +177,7 @@ dmypy.json
 ### preprocessing data ###
 *.pkl
 
+### Model results ###
+*.npy
+
 # End of https://www.toptal.com/developers/gitignore/api/python,linux,visualstudiocode

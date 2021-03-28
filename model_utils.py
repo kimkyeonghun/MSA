@@ -40,9 +40,10 @@ def collate(examples):
     speech_label = [None]*len(examples)
     speech_type_ids = [None]*len(examples)
     speech_sentiment = [None] * len(examples)
+    rawData = [None] * len(examples)
 
     # make examples to each list.
-    for i, (te,tl,tti,ts,twv,ve,vl,vti,vs,tws,se,sl,sti,ss) in enumerate(examples):
+    for i, (te,tl,tti,ts,twv,ve,vl,vti,vs,tws,se,sl,sti,ss,raw) in enumerate(examples):
         text_examples[i] = te
         visual_examples[i] = ve
         speech_examples[i] = se
@@ -62,6 +63,7 @@ def collate(examples):
         text_sentiment[i] = ts
         visual_sentiment[i] = vs
         speech_sentiment[i] = ss
+        rawData[i] = raw
 
     #padding text and make attention_mask
     #print(text_examples[0])
@@ -76,14 +78,20 @@ def collate(examples):
     visual_attention_mask = torch.ones(torch.tensor(visual_examples).shape,dtype=torch.int64)
     visual_attention_mask[(torch.tensor(visual_examples) == 0)] = 0
 
+    visualWithtext_attention_mask = torch.ones(torch.tensor(tWv_examples).shape,dtype=torch.int64)
+    visualWithtext_attention_mask[(torch.tensor(tWv_examples)==0)]==0
+
     #padding speech and make attention_mask
     # padded_speech_ids = pad_example(speech_examples)
     speech_attention_mask = torch.ones(torch.tensor(speech_examples).shape,dtype=torch.int64)
     speech_attention_mask[(torch.tensor(speech_examples) == 0)] = 0
 
+    speechWithtext_attention_mask = torch.ones(torch.tensor(tWs_examples).shape,dtype=torch.int64)
+    speechWithtext_attention_mask[(torch.tensor(tWs_examples)==0)]==0
 
-    #mosi and mosei text sentiment type
+    # MSE(text_sentiment - > torch.float), CE (torch.long)
     return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask, torch.tensor(text_sentiment,dtype = torch.long),\
     torch.tensor(tWv_examples), torch.tensor(visual_examples), torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0), visual_attention_mask, torch.tensor(visual_sentiment,dtype = torch.long),\
-    torch.tensor(tWs_examples), torch.tensor(speech_examples), torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0), speech_attention_mask, torch.tensor(speech_sentiment,dtype = torch.long)
+    torch.tensor(tWs_examples), torch.tensor(speech_examples), torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0), speech_attention_mask, torch.tensor(speech_sentiment,dtype = torch.long),\
+    visualWithtext_attention_mask, speechWithtext_attention_mask,rawData
     

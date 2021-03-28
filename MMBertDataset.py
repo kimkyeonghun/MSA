@@ -9,9 +9,9 @@ import numpy as np
 
 from transformers.modeling_bert import BertEmbeddings
 
-from MMBertEmbedding import FuseGate
-
 cudas = DEVICE
+
+emotions = ['sentiment','happy','sad','anger','surprise','disgust','fear']
 
 class MMBertDataset(Dataset):
     """
@@ -46,13 +46,12 @@ class MMBertDataset(Dataset):
 
             return text_sentence, text_label, text_token_type_ids, tAv_sentence, tAv_label, tAv_token_type_ids, tAs_sentence, tAs_label, tAs_token_type_ids
     """
-
-    def __init__(self,tokenizer,features,dataset):
+    def __init__(self,tokenizer,features,dataset,task):
         self.tokenizer = tokenizer
         self.items = features
         self.total_item = self.count()
         self.dataset =dataset
-        self.fuseGate = FuseGate(1,0.5,dataset)
+        self.task = task
         if self.dataset =='mosi':
             self.VISUALDIM = MOSIVISUALDIM
         elif self.dataset == 'mosei':
@@ -61,13 +60,25 @@ class MMBertDataset(Dataset):
     
     def sentiment_selection(self,sentiment,mode):
         if self.dataset == 'mosei':
-            if mode == '2':
-                if torch.argmax(torch.tensor(abs(sentiment)))<3:
-                    return torch.tensor([0])
-                elif torch.argmax(torch.tensor(abs(sentiment)))>=3:
-                    return torch.tensor([1])
-            elif mode == '7':
-                return torch.argmax(torch.tensor(sentiment))
+            if self.task == "sentiment":
+                if mode == '2':
+                    if sentiment[0]>=0:
+                        return torch.tensor([1])
+                    else:
+                        return torch.tensor([0])
+                elif mode == '7':
+                    #To be add....
+                    pass
+                elif mode == '1':
+                    return torch.tensor(sentiment[0])/3
+            else:
+                if mode == '2':
+                    if torch.tensor(sentiment[emotions.index(self.task)]) !=0:
+                        return torch.tensor([1])
+                    else:
+                        return torch.tensor([0])
+                elif mode == '6':
+                    return torch.argmax(torch.tensor(sentiment[1:]))
         elif self.dataset == 'mosi':
             if mode == '2':
                 if sentiment >=0:
@@ -77,6 +88,8 @@ class MMBertDataset(Dataset):
             elif mode =='7':
                 #To be add....
                 pass
+            elif mode == '1':
+                return torch.tensor(sentiment)/3
 
     def create_concat_joint_sentence(self, i, mode, max_token_len = -1):
         """
@@ -170,70 +183,6 @@ class MMBertDataset(Dataset):
             torch.tensor(textTokenTypeIds,device=cudas),
             torch.tensor(pairTokenTypeIds,device=cudas))
         ), sentiment
-    
-    def create_next_sentence_pair(self, i, max_token_len = -1):
-        """
-        If last sentencse, make label =1
-        Choose random float between 0 and 1,
-            if random number is over 0.5, make next sentence pair(label = 0)
-            else, make next sentence unpair(label=1) using random chooice that do not allow duplicate select (label = 1)
-
-        jointSentence : Tuple([List])
-            ([CLS],first_sentence,[SEP],second_sentence,[SEP])
-
-        label : torch.tensor
-            (1 or 0)
-
-        token_type_ids : torch.tensor
-            (First_sentence_token_type_ids(0) + Second_sentence_token_type_ids(1))
-
-        return jointSentence, label, token_type_ids
-        """
-        firstSentence = None
-        secondSentence = None
-        sentiment = self.sentiment_selection(self.items[i][1][0],"2")
-        
-        if i == len(self.items)-1:
-            firstSentence = self.items[i][0][0]
-            secondSentence = self.items[i][0][0]
-            label = 0
-        else:
-            firstSentence = self.items[i][0][0]
-            r = random.uniform(0,1)
-            
-            if r > 0.2:
-                nextIdx = i+1
-                label = 1
-            else:
-                nextIdx = random.choice(range(len(self.items)))
-                while i == nextIdx:
-                    nextIdx = random.choice(range(len(self.items)))
-                label = 0
-            secondSentence = self.items[nextIdx][0][0]
-
-        # if max_token_len > 0:
-        #     if (len(firstSentence) + len(secondSentence)) > max_token_len:
-        #         num_tokens_to_remove = (len(firstSentence)+len(secondSentence)) - max_token_len
-        #         first, second, _ = self.tokenizer.truncate_sequences(
-        #             ids = firstSentence,
-        #             pair_ids = secondSentence,
-        #             num_tokens_to_remove = num_tokens_to_remove
-        #         )
-        #         firstSentence = first
-        #         secondSentence = second
-        
-        firstTokenTypeIds =  np.zeros(len(firstSentence)+2)
-        secondTokenTypeIds =  np.ones(len(secondSentence)+1)
-
-        CLS = self.tokenizer.cls_token_id
-        SEP = self.tokenizer.sep_token_id
-
-        #jointSentences = torch.tensor([CLS]+firstSentence+[SEP]+secondSentence+[SEP],dtype= torch.long).unsqueeze(-1)
-        jointSentences = np.concatenate(([CLS],firstSentence,[SEP],secondSentence,[SEP]))
-
-        #embedding_output = self.embeddings(jointSentences,token_type_ids=torch.tensor(np.concatenate((firstTokenTypeIds,secondTokenTypeIds)),dtype=torch.long))
-        return torch.tensor(jointSentences), torch.tensor(label,dtype=torch.int64,device=cudas),\
-        torch.cat((torch.tensor(firstTokenTypeIds,device=cudas),torch.tensor(secondTokenTypeIds,device=cudas))),sentiment
 
     def create_text_sentence(self, i, max_token_len = -1):
         """
@@ -257,7 +206,7 @@ class MMBertDataset(Dataset):
 
         #embedding_output = self.embeddings(jointSentences,token_type_ids=torch.tensor(np.concatenate((firstTokenTypeIds,secondTokenTypeIds)),dtype=torch.long))
         return torch.tensor(firstSentence), torch.tensor(label,dtype=torch.int64,device=cudas),\
-        torch.tensor(firstTokenTypeIds,device=cudas),sentiment
+        torch.tensor(firstTokenTypeIds,device=cudas),sentiment,self.items[i][-1]
 
     def count(self):
         """
@@ -273,10 +222,11 @@ class MMBertDataset(Dataset):
     
     def __getitem__(self,i):
         #text_sentence, text_label, text_token_type_ids, text_sentiment = self.create_next_sentence_pair(i,max_token_len = 75)
-        text_sentence, text_label, text_token_type_ids, text_sentiment = self.create_text_sentence(i,max_token_len=75)
+        text_sentence, text_label, text_token_type_ids, text_sentiment,rawData = self.create_text_sentence(i,max_token_len=75)
         text_sentence2,visual_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment = self.create_concat_joint_sentence(i,'visual',max_token_len = -1)
         text_sentence3,speech_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment = self.create_concat_joint_sentence(i,'speech',max_token_len = -1)
 
         return text_sentence, text_label, text_token_type_ids, text_sentiment,\
          text_sentence2, visual_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment,\
-         text_sentence3, speech_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment
+         text_sentence3, speech_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment,\
+         rawData
