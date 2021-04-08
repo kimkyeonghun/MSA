@@ -90,8 +90,8 @@ def collate(examples):
     speechWithtext_attention_mask[(torch.tensor(tWs_examples)==0)]==0
 
     # MSE(text_sentiment - > torch.float), CE (torch.long)
-    return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask, torch.tensor(text_sentiment,dtype = torch.long),\
-    torch.tensor(tWv_examples), torch.tensor(visual_examples), torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0), visual_attention_mask, torch.tensor(visual_sentiment,dtype = torch.long),\
+    return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask, torch.tensor(text_sentiment,dtype = torch.float),\
+    torch.tensor(tWv_examples), torch.tensor(visual_examples), torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0), visual_attention_mask, torch.tensor(visual_sentiment,dtype = torch.float),\
     torch.tensor(tWs_examples), torch.tensor(speech_examples), torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0), speech_attention_mask, torch.tensor(speech_sentiment,dtype = torch.long),\
     visualWithtext_attention_mask, speechWithtext_attention_mask,rawData
     

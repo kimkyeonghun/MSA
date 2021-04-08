@@ -29,12 +29,12 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1'
 parser= argparse.ArgumentParser()
 parser.add_argument("--dataset",type=str,choices=["mosi","mosei"],default='mosei')
 parser.add_argument("--emotion",type=str,default='sentiment')
-parser.add_argument("--num_labels",type=int,default=2)
+parser.add_argument("--num_labels",type=int,default=1)
 parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-base-uncased")
 parser.add_argument("--learning_rate",type=float,default=1e-4)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=100)
-parser.add_argument("--train_batch_size",type=int,default=16)
+parser.add_argument("--train_batch_size",type=int,default=8)
 parser.add_argument("--val_batch_size",type=int,default=2)
 parser.add_argument("--test_batch_size",type=int,default=1)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
@@ -51,10 +51,6 @@ else:
 
 logger, log_dir = utils.get_logger(os.path.join('./logs'))
 
-if args.num_labels == 1:
-    test_score = test_MSE_score_model
-else:
-    test_score = test_CE_score_model
 
 
 def prepareForTraining(numTrainOptimizationSteps):
@@ -146,7 +142,7 @@ def convertTofeatures(samples,tokenizer):
 
         Using inversion list, make visual and speech length same sa tokens length.
 
-        They have too many tokens.Therefore, truncate about max_seq_length == 200.
+        They have too many tokens.Therefore, truncate about max_seq_length == 100.
 
         In prepare_input, convert token to token_id and make (token,visual,speech) length to max_seq_length using padding.
 
@@ -308,10 +304,10 @@ def mask_tokens(inputs, tokenizer, args):
     #Check this line necessary
     inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
 
-    #indices_random = torch.bernoulli(torch.full(labels.shape,0.5,device=DEVICE)).bool() & masked_indices & ~indices_replaced
-    #Must make total_vocab_size in globals
-    #random_words = torch.randint(config.total_vocab_size,labels.shape,dtype = torch.long,device=DEVICE)
-    #inputs[indices_random] = random_words[indices_random]
+    # indices_random = torch.bernoulli(torch.full(labels.shape,0.5,device=DEVICE)).bool() & masked_indices & ~indices_replaced
+    # # Must make total_vocab_size in globals
+    # random_words = torch.randint(config.total_vocab_size,labels.shape,dtype = torch.long,device=DEVICE)
+    # inputs[indices_random] = random_words[indices_random]
 
     return inputs,labels
 
@@ -351,11 +347,15 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         tws_ids, speech_ids, speech_label,speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
         twv_attention_mask, tws_attention_mask = batch[17], batch[18]
 
+        text_ids = text_ids.to(DEVICE)
+        twv_ids = twv_ids.to(DEVICE)
+        tws_ids = tws_ids.to(DEVICE)
+
         #if args.mlm is true, do masking.
-        text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids,text_ids)
-        twv_ids, visual_mask_labels = mask_tokens(twv_ids,tokenizer,args) if args.mlm else (visual_ids, visual_ids)
-        tws_ids, speech_mask_labels = mask_tokens(tws_ids,tokenizer,args) if args.mlm else (speech_ids, speech_ids)
-        
+        text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids, text_ids)
+        twv_ids, visual_mask_labels = mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
+        tws_ids, speech_mask_labels = mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
+
         #Make tensor cpu to cuda
         text_inputs = text_inputs.to(DEVICE)
         text_mask_labels = text_mask_labels.to(DEVICE)
@@ -374,8 +374,6 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         speech_token_type_ids = speech_token_type_ids.to(DEVICE)
 
         text_attention_masks = text_attention_masks.to(DEVICE)
-        #visual_attention_masks = visual_attention_masks.to(DEVICE)
-        #speech_attention_masks = speech_attention_masks.to(DEVICE)
 
         text_sentiment = text_sentiment.to(DEVICE)
         visual_sentiment = visual_sentiment.to(DEVICE)
@@ -387,7 +385,7 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         visual_attention_masks = (twv_attention_mask, visual_attention_masks)
         speech_attention_masks = (tws_attention_mask, speech_attention_masks)
 
-        # get outputs using model(MMbertForpretraining)
+        #get outputs using model(MMbertForpretraining)
         outputs,_ = model(
             text_input_ids = text_inputs,
             visual_input_ids = visual_inputs,
@@ -474,8 +472,8 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
             twv_attention_mask, tws_attention_mask = batch[17], batch[18]
 
             text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids,text_ids)
-            twv_ids, visual_mask_labels = mask_tokens(twv_ids,tokenizer,args) if args.mlm else (visual_ids, visual_ids)
-            tws_ids, speech_mask_labels = mask_tokens(tws_ids,tokenizer,args) if args.mlm else (speech_ids, speech_ids)
+            twv_ids, visual_mask_labels = mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
+            tws_ids, speech_mask_labels = mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
 
             visual_mask_labels = visual_mask_labels.to(DEVICE)
             speech_mask_labels = speech_mask_labels.to(DEVICE)
@@ -539,7 +537,7 @@ def test_CE_score_model(preds,y_test):
     """
         Input = preds, y_test
         
-        Using model's prediction, cal MAE, ACC, F_score in mosei dataset
+        Using model's emotion detection, cal MAE, ACC, F_score in mosei dataset
 
         return acc, MAE, F_score
     """
@@ -548,7 +546,6 @@ def test_CE_score_model(preds,y_test):
 
     f_score = f1_score(y_test, preds, average="weighted")
     acc = accuracy_score(y_test, preds)
-    #acc = balanced_accuracy_score(y_test, preds)
 
     return acc, mae, f_score
 
@@ -556,7 +553,7 @@ def test_MSE_score_model(preds,y_test, use_zero=False):
     """
         Input = preds, y_test
         
-        Using model's prediction, cal MAE, ACC, F_score in mosi dataset
+        Using model's sentiment analysis, cal MAE, ACC, F_score in mosei dataset
 
         return acc, MAE, F_score
     """
@@ -585,6 +582,12 @@ def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenize
     best_loss = float('inf')
     best_acc = 0
     patience = 0
+
+    if args.num_labels == 1:
+        test_score = test_MSE_score_model
+    else:
+        test_score = test_CE_score_model
+
     for epoch in range(int(args.n_epochs)):
         patience += 1
 
@@ -598,7 +601,6 @@ def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenize
 
         logger.info("=====================Test======================")
         test_acc,test_mae,test_f_score = test_score(preds,labels)
-        #test_acc,test_mae,test_f_score = test_MSE_score_model(preds,labels)
 
         logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_f_score))
 

@@ -177,7 +177,6 @@ def convertTofeatures(samples,tokenizer):
             input_ids.detach().numpy().squeeze().shape[0]
         except:
             pass
-        
         features.append(
             ((input_ids,visual,speech,input_mask),
             label,
@@ -236,14 +235,14 @@ def test_epoch(model,testDataloader):
 
     with torch.no_grad():
         for batch in tqdm(testDataloader):
+            rawData = batch[-1]
             batch = tuple(t.to(DEVICE) for t in batch[:-1])
 
             text_ids, text_label, text_token_type_ids, text_attention_masks,text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
             twv_ids, visual_ids, visual_label, visual_token_type_ids, visual_attention_masks, visual_sentiment = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
             tws_ids, speech_ids, speech_label, speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
             twv_attention_mask, tws_attention_mask = batch[17], batch[18]
-            rawData = batch[-1]
-
+            
             text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if False else (text_ids,text_ids)
             twv_ids, visual_mask_labels = mask_tokens(twv_ids,tokenizer,args) if False else (twv_ids, visual_ids)
             tws_ids, speech_mask_labels = mask_tokens(tws_ids,tokenizer,args) if False else (tws_ids, speech_ids)
@@ -277,23 +276,28 @@ def test_epoch(model,testDataloader):
 
             logits = logits.detach().cpu().numpy()
             label_ids = text_sentiment.detach().cpu().numpy()
-            rawData = rawData.detach().cpu().numpy()
             
             preds.extend(logits)
             targets.extend(rawData)
             labels.extend(label_ids)
         preds = np.array(preds)
         labels = np.array(labels)
-        targets = np.array(targets)
+
+        #Save results
+        import pickle
+        with open('target.pkl','wb') as f:
+            pickle.dump(targets,f)
 
         np.save('./preds',preds)
         np.save('./y_test',labels)
-        np.save('./target',targets)
 
     return preds, labels
 
 
 def ACC7(value):
+    """
+    for 7 label
+    """
     for i,v in enumerate(value):
         if v < -2:
             value[i] = -3
@@ -312,6 +316,9 @@ def ACC7(value):
     return value
 
 def ACC3(preds,y_test):
+    """
+    for 2 label except 0
+    """
     newPreds = []
     newYtest = []
     for i,(p,y) in enumerate(zip(preds,y_test)):
@@ -357,7 +364,7 @@ def test_score_model(model,testDataset):
     y_test2 = y_test >= 0
 
     acc2 = accuracy_score(y_test2, preds2)
-    f_score = f1_score(y_test, preds, average="weighted")
+    f_score = f1_score(y_test2, preds2, average="weighted")
 
     preds3, y_test3 = ACC3(preds, y_test)
 
@@ -368,7 +375,7 @@ def test_score_model(model,testDataset):
 def main():
     with open("cmu_{}.pkl".format(args.dataset),'br') as fr:
         data = pickle.load(fr)
-        
+
     testData = data["test"]
 
     testDataset, _ = makeDataset(testData)
