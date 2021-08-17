@@ -16,7 +16,7 @@ class MMBertModel(BertPreTrainedModel):
     def __init__(self,config):
         super().__init__(config)
         self.config = config
-        self.jointEmbeddings = JointEmbeddings(config.hidden_size,0.5,'mosei')
+        self.jointEmbeddings = JointEmbeddings(config.hidden_size,0.5,'mosi')
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)

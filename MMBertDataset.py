@@ -139,7 +139,7 @@ class MMBertDataset(Dataset):
         if not edgeCase:
             r = random.uniform(0,1)
             
-            if r > 0:
+            if r > 0.2:
                 firstIndex = i
                 secondIndex = i
                 label = 1

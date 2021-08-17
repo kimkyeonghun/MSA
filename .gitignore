@@ -180,4 +180,6 @@ dmypy.json
 ### Model results ###
 *.npy
 
+nohup.out
+
 # End of https://www.toptal.com/developers/gitignore/api/python,linux,visualstudiocode
