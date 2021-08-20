@@ -24,7 +24,7 @@ import config
 import utils
 import model_utils
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 parser= argparse.ArgumentParser()
 parser.add_argument("--dataset",type=str,choices=["mosi","mosei"],default='mosei')
@@ -35,7 +35,7 @@ parser.add_argument("--learning_rate",type=float,default=1e-5)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=100)
 parser.add_argument("--train_batch_size",type=int,default=16)
-parser.add_argument("--val_batch_size",type=int,default=2)
+parser.add_argument("--val_batch_size",type=int,default=4)
 parser.add_argument("--test_batch_size",type=int,default=1)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
 parser.add_argument("--mlm",type=bool,default=True)
@@ -68,10 +68,10 @@ def prepareForTraining(numTrainOptimizationSteps):
         return model : class MMBertForPretraining, optimizer : Admaw, scheduler : warmup_start
     """
     model = MMBertForPretraining.from_pretrained(args.model, num_labels=args.num_labels)
-    model = torch.nn.DataParallel(model)
-    
-    model.to(DEVICE)
-                    
+    model.bert.set_joint_embeddings(args.dataset)
+    #model = torch.nn.DataParallel(model)
+    #model.to(DEVICE)
+    model.cuda()
     param_optimizer = list(model.named_parameters())
     no_decay = ['bias','LayerNorm.bias','LayerNorm.weight']
     optimizer_grouped_parameters = [
@@ -79,7 +79,7 @@ def prepareForTraining(numTrainOptimizationSteps):
             "params" : [
                 p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
             ],
-            "weight_decay": 0.15,
+            "weight_decay": 0.01,
         },
         {
             "params" : [
@@ -362,11 +362,13 @@ def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
         text_label = text_label.to(DEVICE)
 
         visual_inputs = visual_ids.to(DEVICE)
-        visual_mask_labels = visual_mask_labels.to(DEVICE)
+        #visual_mask_labels = visual_mask_labels.to(DEVICE)
+        visual_mask_labels = torch.cat((visual_mask_labels, visual_mask_labels),dim=-1).to(DEVICE)
         visual_label = visual_label.to(DEVICE)
 
         speech_inputs = speech_ids.to(DEVICE)
-        speech_mask_labels = speech_mask_labels.to(DEVICE)
+        #speech_mask_labels = speech_mask_labels.to(DEVICE)
+        speech_mask_labels = torch.cat((speech_mask_labels, speech_mask_labels),dim=-1).to(DEVICE)
         speech_label = speech_label.to(DEVICE)
 
         text_token_type_ids = text_token_type_ids.to(DEVICE)
@@ -475,8 +477,11 @@ def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
             twv_ids, visual_mask_labels = mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
             tws_ids, speech_mask_labels = mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
 
-            visual_mask_labels = visual_mask_labels.to(DEVICE)
-            speech_mask_labels = speech_mask_labels.to(DEVICE)
+            # visual_mask_labels = visual_mask_labels.to(DEVICE)
+            # speech_mask_labels = speech_mask_labels.to(DEVICE)
+
+            visual_mask_labels = torch.cat((visual_mask_labels, visual_mask_labels),dim=-1).to(DEVICE)
+            speech_mask_labels = torch.cat((speech_mask_labels, speech_mask_labels),dim=-1).to(DEVICE)
 
             visual_attention_masks = (twv_attention_mask, visual_attention_masks)
             speech_attention_masks = (tws_attention_mask, speech_attention_masks)
@@ -606,14 +611,19 @@ def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenize
 
         if test_acc > best_acc:
             torch.save(model.state_dict(),os.path.join(model_save_path,'model_'+str(epoch+1)+".pt"))
+            best_epoch = epoch
             best_acc = test_acc
+            best_mae = test_mae
+            best_f_score = test_f_score
             patience = 0
 
-        if patience == 30:
+        if patience == 10:
             break
 
         val_losses.append(valid_loss)
         test_accuracy.append(test_acc)
+
+    logger.info("\n[Best Epoch {}] Best_ACC : {}, Best_MAE : {}, Best_F_Score: {}".format(best_epoch+1, best_acc, best_mae, best_f_score))
 
 
 def main():

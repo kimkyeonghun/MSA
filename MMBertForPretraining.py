@@ -16,7 +16,7 @@ class MMBertModel(BertPreTrainedModel):
     def __init__(self,config):
         super().__init__(config)
         self.config = config
-        self.jointEmbeddings = JointEmbeddings(config.hidden_size,0.5,'mosi')
+        #self.jointEmbeddings = JointEmbeddings(config.hidden_size,0.5,'mosi')
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
@@ -24,6 +24,9 @@ class MMBertModel(BertPreTrainedModel):
         #self.Linear_v = nn.Linear()
 
         self.init_weights()
+
+    def set_joint_embeddings(self, dataset):
+        self.jointEmbeddings = JointEmbeddings(self.config.hidden_size,0.5, dataset)
 
     def get_input_embeddings(self):
         return self.embeddings.word_embeddings
@@ -245,6 +248,10 @@ class MMBertModel(BertPreTrainedModel):
             token_type_ids = torch.zeros(input_shape,dtype=torch.float,device=device)
         
         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask,input_shape,device,joint)
+
+        if joint:
+            extended_attention_mask2: torch.Tensor = self.get_extended_attention_mask(pair_mask,input_shape,device,joint)
+            extended_attention_mask = torch.cat((extended_attention_mask,extended_attention_mask2),dim=-1)
 
 
         if self.config.is_decoder and encoder_hidden_states is not None:

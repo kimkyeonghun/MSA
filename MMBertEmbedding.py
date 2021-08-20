@@ -28,19 +28,32 @@ class JointEmbeddings(nn.Module):
         assert pair_ids != None, "You miss pair_ids"
 
         concat_embs = torch.cat((input_embs,pair_ids.float()),dim=-1)
-        #print("concat_embs",concat_embs.shape)
+        # #print("concat_embs",concat_embs.shape)
+        # #print(pair_ids.size())
+        # if pair_ids.size()[-1] == self.VISUALDIM:
+        #     visualW = F.relu(self.Wv(pair_ids.float()))
+        #     #print("visualW",visualW.shape)
+        #     embeddings = visualW*self.W_cv(concat_embs)
+        # elif pair_ids.size()[-1] == SPEECHDIM:
+        #     speechW = F.relu(self.Ws(pair_ids.float()))
+        #     embeddings = speechW*self.W_cs(concat_embs)
+        # else:
+        #     raise Exception('Wrong Dimension')
+        # #print("embeddings",embeddings.shape)
+        # embeddings = self.LayerNorm(embeddings)
+        # embeddings = self.dropout(embeddings)
+
+                #print("concat_embs",concat_embs.shape)
         #print(pair_ids.size())
         if pair_ids.size()[-1] == self.VISUALDIM:
-            visualW = F.relu(self.Wv(pair_ids.float()))
-            #print("visualW",visualW.shape)
-            embeddings = visualW*self.W_cv(concat_embs)
+            pair_embeds = F.relu(self.Wv(pair_ids.float()))
         elif pair_ids.size()[-1] == SPEECHDIM:
-            speechW = F.relu(self.Ws(pair_ids.float()))
-            embeddings = speechW*self.W_cs(concat_embs)
+            pair_embeds = F.relu(self.Ws(pair_ids.float()))
         else:
             raise Exception('Wrong Dimension')
         #print("embeddings",embeddings.shape)
-        embeddings = self.LayerNorm(embeddings)
+        inputs_embeds = torch.cat((input_embs,pair_embeds),dim=1)
+        embeddings = self.LayerNorm(inputs_embeds)
         embeddings = self.dropout(embeddings)
         
         return embeddings
