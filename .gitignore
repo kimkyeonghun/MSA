@@ -176,6 +176,7 @@ dmypy.json
 
 ### preprocessing data ###
 *.pkl
+*.p
 
 ### Model results ###
 *.npy

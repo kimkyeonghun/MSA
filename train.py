@@ -2,14 +2,10 @@ import os
 import pickle
 import argparse
 import logging
-from tqdm import tqdm, trange
+from typing import Dict, Tuple
 
 import numpy as np
-
-from sklearn.metrics import accuracy_score, f1_score
-
-import torch
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data.dataset import Dataset
 
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
 from transformers.optimization import AdamW
@@ -19,19 +15,19 @@ from transformers.optimization import AdamW
 from MMBertDataset import MMBertDataset
 #To modify model name MMBertForPretraining -> MMBertForPreTraining
 from MMBertForPretraining import MMBertForPretraining
-from config import DEVICE, MOSEIVISUALDIM, MOSIVISUALDIM, SPEECHDIM
-import config
+from config import MOSEIVISUALDIM, MOSIVISUALDIM, SPEECHDIM
+from trainer import train
 import utils
-import model_utils
+
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 parser= argparse.ArgumentParser()
-parser.add_argument("--dataset",type=str,choices=["mosi","mosei"],default='mosei')
+parser.add_argument("--dataset",type=str,choices=["mosi","mosei", "meld"],default='mosei')
 parser.add_argument("--emotion",type=str,default='sentiment')
 parser.add_argument("--num_labels",type=int,default=1)
 parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-base-uncased")
-parser.add_argument("--learning_rate",type=float,default=1e-5)
+parser.add_argument("--learning_rate",type=float,default=1e-4)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=100)
 parser.add_argument("--train_batch_size",type=int,default=16)
@@ -132,7 +128,7 @@ def prepare_inputs(tokens, visual, speech, tokenizer):
     return input_ids, visual, speech, input_mask
 
 
-def convertTofeatures(samples,tokenizer):
+def convert2features(samples: list, tokenizer: BertTokenizer):
     """
         Input = samples : [List], tokenizer(will...)
             - samples[0] : (words,visual,speech),label, segment
@@ -152,7 +148,7 @@ def convertTofeatures(samples,tokenizer):
         return features
     """
     features = []
-    for idx, sample in enumerate(samples):
+    for _, sample in enumerate(samples):
         (words,visual,speech), label, segment = sample
 
         # if label == 0:
@@ -170,12 +166,17 @@ def convertTofeatures(samples,tokenizer):
         
         #Make same length between token, visual, speech
         newVisual, newSpeech = [],[]
+        # print(len(list(tokens)))
+        # print(visual.shape)
+        # print(speech.shape)
+
         for inv in inversions:
             newVisual.append(visual[inv,:])
             newSpeech.append(speech[inv,:])
         
         visual = np.array(newVisual)
         speech = np.array(newSpeech)
+
 
         #Truncate
         if len(tokens) > args.max_seq_length-2:
@@ -197,7 +198,11 @@ def convertTofeatures(samples,tokenizer):
         )
     return features
 
-def get_tokenizer(model):
+def MELD_features(data):
+    features = 0
+    return features
+
+def get_tokenizer(model: str) -> BertTokenizer:
     """
     Load tokenizer
     # Will be global variable
@@ -211,10 +216,8 @@ def get_tokenizer(model):
             "Expected 'bert-base-uncased' or 'bert-large-uncased', but get {}".format(model)
             )
 
-def makeDataset(data):
+def make_dataset(data: list) -> Tuple[MMBertDataset, BertTokenizer]:
     """
-        Input : data [List]
-
         Load tokenzier using args.model(bert-base-uncased or bert-large-uncased).If you want, you can change another.
         With Input and tokenizer, we convert raw data to features using at training stage.
 
@@ -222,17 +225,22 @@ def makeDataset(data):
         After converting raw to feature, make dataset using torch.utils.data.dataset in MMBertDataset.py
 
         #Future work : tokenizer will be global variable
-        Return : dataset, tokenizer
     """
     tokenizer = get_tokenizer(args.model)
-    features = convertTofeatures(data,tokenizer)
+    features = convert2features(data, tokenizer)
 
     #Need to modify
-    dataset = MMBertDataset(tokenizer,features,args.dataset,args.emotion)
+    dataset = MMBertDataset(tokenizer, features, args.dataset, args.emotion, args.num_labels)
     
     return dataset, tokenizer
 
-def loadDataset():
+def make_MELD_dataset(data: list) -> MMBertDataset:
+    features = MELD_features(data)
+    tokenizer = get_tokenizer(args.model)
+    dataset = MMBertDataset(tokenizer, features, args.dataset, args.emotion, args.num_labels)
+    return dataset, tokenizer
+
+def load_dataset()  -> Tuple[MMBertDataset, MMBertDataset, MMBertDataset, int, BertTokenizer]:
     """
         load Data from pickle by producing at pre_processing.py
 
@@ -244,402 +252,100 @@ def loadDataset():
                 ----test = (word,visual,speech),label(sentimnet),segment(situation number)
         
         #Future work : tokenizer will be global variable
-        return (trainDataset : torch.utils.data.Dataset, valDataset : torch.utils.data.Dataset, testDataset : torch.utils.data.Dataset, numTrainOpimizationSteps,tokenizer)
     """
     #If you don't save pkl to byte form, then you may change read mode.
-    logger.info("**********Load CMU_{} Dataset**********".format(args.dataset))
-    with open("cmu_{}.pkl".format(args.dataset),'br') as fr:
-        data = pickle.load(fr)
+    logger.info(f"**********Load CMU_{args.dataset} Dataset**********")
+    with open(f"cmu_{args.dataset}.pkl",'br') as fr:
+        data: dict = pickle.load(fr)
         
-    trainData = data["train"]
-    valData = data["val"]
-    testData = data["test"]
+    train_data: list = data["train"]
+    val_data: list = data["val"]
+    test_data: list = data["test"]
     
     logger.info("**********Split Train Dataset**********")
-    trainDataset, tokenizer = makeDataset(trainData)
-    logger.info("The Length of TrainDataset : {}".format(len(trainDataset)))
+    train_dataset, tokenizer = make_dataset(train_data)
+    logger.info(f"The Length of TrainDataset : {len(train_dataset)}")
     logger.info("**********Finish Train makeDataset**********")
 
     logger.info("**********Split Valid Dataset**********")
-    valDataset, _ = makeDataset(valData)
-    logger.info("The Length of ValDataset : {}".format(len(valDataset)))
+    val_dataset, _ = make_dataset(val_data)
+    logger.info(f"The Length of ValDataset : {len(val_dataset)}")
     logger.info("**********Finish Valid makeDataset**********")
 
     logger.info("**********Split Test Dataset**********")
-    testDataset, _ = makeDataset(testData)
-    logger.info("The Length of TestDataset : {}".format(len(testDataset)))
+    test_dataset, _ = make_dataset(test_data)
+    logger.info(f"The Length of TestDataset : {len(test_dataset)}")
     logger.info("**********Finish Test makeDataset**********")
 
     #maybe warmup start?
-    numTrainOptimizationSteps = (int(len(trainData)/ args.train_batch_size / args.gradient_accumulation_step)) * args.n_epochs
+    num_train_optim_steps = (int(len(train_data)/ args.train_batch_size / args.gradient_accumulation_step)) * args.n_epochs
     
-    return (trainDataset,valDataset,testDataset,numTrainOptimizationSteps,tokenizer)
+    return (train_dataset, val_dataset, test_dataset, num_train_optim_steps, tokenizer)
 
+def load_MELD_dataset() -> Tuple[Dataset, Dataset, Dataset, int, BertTokenizer]:
+    """
+        load Data from pickle by producing at pre_processing.py
+
+        Data Strcuture
+        data    ----train = (word,visual,speech),label(sentimnet),segment(situation number)
+                |
+                ----test = (word,visual,speech),label(sentimnet),segment(situation number)
+        
+        #Future work : tokenizer will be global variable
+    """
+    #If you don't save pkl to byte form, then you may change read mode.
+    logger.info("**********Load MELD Dataset**********")
+    with open(f"./data/{args.dataset}_data.pkl",'br') as fr:
+        data: dict = pickle.load(fr)
+        
+    train_data: list = data["train"]
+    val_data: list = data['val']
+    test_data: list = data["test"]
     
-def mask_tokens(inputs, tokenizer, args):
-    """
-        Need more modify because of Joint sentence dimension error
-    """
-    if tokenizer.mask_token is None:
-        raise ValueError(
-            "This tokenizer does not have a mask token which is necessary for masked language modeling. Remove the --mlm flag"
-        )
+    logger.info("**********Split Train Dataset**********")
+    train_dataset, tokenizer = make_MELD_dataset(train_data)
+    logger.info(f"The Length of TrainDataset : {len(train_dataset)}")
+    logger.info("**********Finish Train makeDataset**********")
+
+    logger.info("**********Split Valid Dataset**********")
+    val_dataset, _ = make_MELD_dataset(val_data)
+    logger.info(f"The Length of ValDataset : {len(val_dataset)}")
+    logger.info("**********Finish Valid makeDataset**********")
+
+    logger.info("**********Split Test Dataset**********")
+    test_dataset, _ = make_MELD_dataset(test_data)
+    logger.info(f"The Length of TestDataset : {len(test_dataset)}")
+    logger.info("**********Finish Test makeDataset**********")
+
+    #maybe warmup start?
+    num_train_optim_steps = (int(len(train_data)/ args.train_batch_size / args.gradient_accumulation_step)) * args.n_epochs
     
-    labels = inputs.clone()
-    probability_matrix = torch.full(labels.shape,args.mlm_probability, device = DEVICE)
-    special_tokens_mask =[
-        tokenizer.get_special_tokens_mask(val,already_has_special_tokens=True) for val in labels.tolist()
-    ]
-
-    #Shape probelm
-    #RuntimeError: The expanded size of the tensor (35) must match the existing size (51) at non-singleton dimension 2.  Target sizes: [4, 51, 35].  Tensor sizes: [4, 51]
-    probability_matrix.masked_fill_(torch.tensor(special_tokens_mask,dtype=torch.bool,device=DEVICE),value=0.0)
-    if tokenizer._pad_token is not None:
-        padding_mask = labels.eq(tokenizer.pad_token_id)
-        probability_matrix.masked_fill(padding_mask.cuda(), value=0.0)
-    masked_indices = torch.bernoulli(probability_matrix).bool()
-    labels[~masked_indices] = -100
-
-    indices_replaced = torch.bernoulli(torch.full(labels.shape,0.8,device=DEVICE)).bool() & masked_indices
-    #Check this line necessary
-    inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
-
-    # indices_random = torch.bernoulli(torch.full(labels.shape,0.5,device=DEVICE)).bool() & masked_indices & ~indices_replaced
-    # # Must make total_vocab_size in globals
-    # random_words = torch.randint(config.total_vocab_size,labels.shape,dtype = torch.long,device=DEVICE)
-    # inputs[indices_random] = random_words[indices_random]
-
-    return inputs,labels
-
-
-def train_epoch(model,traindata,optimizer,scheduler,tokenizer):
-    """
-        Input = model : MMBertForPretraining, traindata : torch.utils.data.Dataset, optimizer : AdamW, scheduler : warmup_start, tokenizer : BertTokenizer
-        Do train model in set epoch.
-
-        Using Randomsampler and Dataloader, make traindataset to trainDataloader that do training.
-        Datalodaer has collate function. collate function does padding at all examples.
-
-        If args.mlm is True, do masking at text(visual, speech)_id.
-
-        After finishing padding and masking, get outputs using model. Next, calculate loss.
-
-        return training_loss divided by training step.
-    """
-    #Make Dataloader
-    trainSampler = RandomSampler(traindata)
-    trainDataloader = DataLoader(
-        traindata, sampler=trainSampler, batch_size=args.train_batch_size, collate_fn=model_utils.collate
-    )
-
-    #Train
-    epochs_trained = 0
-    train_loss = 0.0
-    text_loss = 0.0
-    visual_loss = 0.0
-    speech_loss = 0.0
-    label_loss = 0.0
-    nb_tr_steps = 0
-    model.train()
-    for step, batch in enumerate(tqdm(trainDataloader,desc="Iteration")):
-        text_ids, text_label, text_token_type_ids, text_attention_masks,text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
-        twv_ids, visual_ids, visual_label,visual_token_type_ids, visual_attention_masks, visual_sentiment = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
-        tws_ids, speech_ids, speech_label,speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
-        twv_attention_mask, tws_attention_mask = batch[17], batch[18]
-
-        text_ids = text_ids.to(DEVICE)
-        twv_ids = twv_ids.to(DEVICE)
-        tws_ids = tws_ids.to(DEVICE)
-
-        #if args.mlm is true, do masking.
-        text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids, text_ids)
-        twv_ids, visual_mask_labels = mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
-        tws_ids, speech_mask_labels = mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
-
-        #Make tensor cpu to cuda
-        text_inputs = text_inputs.to(DEVICE)
-        text_mask_labels = text_mask_labels.to(DEVICE)
-        text_label = text_label.to(DEVICE)
-
-        visual_inputs = visual_ids.to(DEVICE)
-        #visual_mask_labels = visual_mask_labels.to(DEVICE)
-        visual_mask_labels = torch.cat((visual_mask_labels, visual_mask_labels),dim=-1).to(DEVICE)
-        visual_label = visual_label.to(DEVICE)
-
-        speech_inputs = speech_ids.to(DEVICE)
-        #speech_mask_labels = speech_mask_labels.to(DEVICE)
-        speech_mask_labels = torch.cat((speech_mask_labels, speech_mask_labels),dim=-1).to(DEVICE)
-        speech_label = speech_label.to(DEVICE)
-
-        text_token_type_ids = text_token_type_ids.to(DEVICE)
-        visual_token_type_ids = visual_token_type_ids.to(DEVICE)
-        speech_token_type_ids = speech_token_type_ids.to(DEVICE)
-
-        text_attention_masks = text_attention_masks.to(DEVICE)
-
-        text_sentiment = text_sentiment.to(DEVICE)
-        visual_sentiment = visual_sentiment.to(DEVICE)
-        speech_sentiment = speech_sentiment.to(DEVICE)
-
-        twv_ids = twv_ids.to(DEVICE)
-        tws_ids = tws_ids.to(DEVICE)
-
-        visual_attention_masks = (twv_attention_mask, visual_attention_masks)
-        speech_attention_masks = (tws_attention_mask, speech_attention_masks)
-
-        #get outputs using model(MMbertForpretraining)
-        outputs,_ = model(
-            text_input_ids = text_inputs,
-            visual_input_ids = visual_inputs,
-            speech_input_ids = speech_inputs,
-            text_with_visual_ids = twv_ids,
-            text_with_speech_ids = tws_ids,
-            text_token_type_ids = text_token_type_ids,
-            visual_token_type_ids = visual_token_type_ids,
-            speech_token_type_ids = speech_token_type_ids,
-            text_attention_mask = text_attention_masks,
-            visual_attention_mask = visual_attention_masks,
-            speech_attention_mask = speech_attention_masks,
-            text_masked_lm_labels = text_mask_labels,
-            visual_masked_lm_labels = visual_mask_labels,
-            speech_masked_lm_labels = speech_mask_labels,
-            text_next_sentence_label = None,
-            visual_next_sentence_label = visual_label,
-            speech_next_sentence_label = speech_label,
-            text_sentiment = text_sentiment,
-        )
-
-        #Need to check
-        loss = outputs[0]
-        T_loss = outputs[1]
-        V_loss = outputs[2]
-        S_loss = outputs[3]
-        L_loss = outputs[4]
-
-        loss.mean().backward()
-
-        train_loss += loss.mean().item()
-        if T_loss is not None:
-            text_loss += T_loss.mean().item()
-        if V_loss is not None:
-            visual_loss += V_loss.mean().item()
-        if S_loss is not None:
-            speech_loss += S_loss.mean().item()
-
-        label_loss += L_loss.mean().item()
-        nb_tr_steps +=1
-
-        if (step + 1)& args.gradient_accumulation_step == 0:
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
-        
-    return train_loss / nb_tr_steps, text_loss / nb_tr_steps ,visual_loss / nb_tr_steps , speech_loss / nb_tr_steps , label_loss / nb_tr_steps
-
-def eval_epoch(model,valDataset,optimizer,scheduler,tokenizer):
-    """
-        Input = model : MMBertForPretraining, valdata : torch.utils.data.Dataset, optimizer : AdamW, scheduler : warmup_start, tokenizer : BertTokenizer
-        Do eval model in set epoch.
-
-        Using Randomsampler and Dataloader, make valdataset to valDataloader that do evaling.
-        Datalodaer has collate function. collate function does padding at all examples.
-
-        If args.mlm is True, do masking at text(visual, speech)_id.
-
-        After finishing padding and masking, get outputs using model with no_grad. Next, calculate loss.
-
-        return eval_loss divided by dev_step.
-    """
-
-    model.eval()
-    dev_loss = 0
-    text_loss = 0.0
-    visual_loss = 0.0
-    speech_loss = 0.0
-    label_loss = 0.0
-    nb_dev_examples,nb_dev_steps = 0,0
-
-    valSampler = RandomSampler(valDataset)
-    valDataloader = DataLoader(
-        valDataset, sampler=valSampler, batch_size=args.val_batch_size, collate_fn = model_utils.collate
-    )
-    preds = []
-    labels = []
-    with torch.no_grad():
-        for step, batch in enumerate(tqdm(valDataloader,desc="Iteration")):
-            batch = tuple(t.to(DEVICE) for t in batch[:-1])
-            text_ids, text_label, text_token_type_ids, text_attention_masks,text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
-            twv_ids, visual_ids, visual_label, visual_token_type_ids, visual_attention_masks, visual_sentiment = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
-            tws_ids, speech_ids, speech_label, speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
-            twv_attention_mask, tws_attention_mask = batch[17], batch[18]
-
-            text_inputs, text_mask_labels = mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids,text_ids)
-            twv_ids, visual_mask_labels = mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
-            tws_ids, speech_mask_labels = mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
-
-            # visual_mask_labels = visual_mask_labels.to(DEVICE)
-            # speech_mask_labels = speech_mask_labels.to(DEVICE)
-
-            visual_mask_labels = torch.cat((visual_mask_labels, visual_mask_labels),dim=-1).to(DEVICE)
-            speech_mask_labels = torch.cat((speech_mask_labels, speech_mask_labels),dim=-1).to(DEVICE)
-
-            visual_attention_masks = (twv_attention_mask, visual_attention_masks)
-            speech_attention_masks = (tws_attention_mask, speech_attention_masks)
-
-            outputs,logits = model(
-                text_input_ids = text_inputs,
-                visual_input_ids = visual_ids,
-                speech_input_ids = speech_ids,
-                text_with_visual_ids = twv_ids,
-                text_with_speech_ids = tws_ids,
-                text_token_type_ids = text_token_type_ids,
-                visual_token_type_ids = visual_token_type_ids,
-                speech_token_type_ids = speech_token_type_ids,
-                text_attention_mask = text_attention_masks,
-                visual_attention_mask = visual_attention_masks,
-                speech_attention_mask = speech_attention_masks,
-                text_masked_lm_labels = text_mask_labels,
-                visual_masked_lm_labels = visual_mask_labels,
-                speech_masked_lm_labels = speech_mask_labels,
-                text_next_sentence_label = None,
-                visual_next_sentence_label = visual_label,
-                speech_next_sentence_label = speech_label,
-                text_sentiment = text_sentiment,
-            )
-
-            logits = logits.detach().cpu().numpy()
-            label_ids = text_sentiment.detach().cpu().numpy()
-            loss = outputs[0]
-            T_loss = outputs[1]
-            V_loss = outputs[2]
-            S_loss = outputs[3]
-            L_loss = outputs[4]
-
-            #for colab
-            #logits = np.expand_dims(logits,axis=-1)
-
-            dev_loss += loss.mean().item()
-            nb_dev_steps +=1
-
-            preds.extend(logits)
-            labels.extend(label_ids)
-
-            if T_loss is not None:
-                text_loss += T_loss.mean().item()
-            if V_loss is not None:
-                visual_loss += V_loss.mean().item()
-            if S_loss is not None:
-                speech_loss += S_loss.mean().item()
-
-            label_loss += L_loss.mean().item()
-
-        preds = np.array(preds)
-        labels = np.array(labels)           
-
-    return dev_loss / nb_dev_steps, text_loss / nb_dev_steps ,visual_loss / nb_dev_steps , speech_loss / nb_dev_steps , label_loss / nb_dev_steps, preds,labels
-
-def test_CE_score_model(preds,y_test):
-    """
-        Input = preds, y_test
-        
-        Using model's emotion detection, cal MAE, ACC, F_score in mosei dataset
-
-        return acc, MAE, F_score
-    """
-    #MAE
-    mae = np.mean(np.absolute(preds - y_test))
-
-    f_score = f1_score(y_test, preds, average="weighted")
-    acc = accuracy_score(y_test, preds)
-
-    return acc, mae, f_score
-
-def test_MSE_score_model(preds,y_test, use_zero=False):
-    """
-        Input = preds, y_test
-        
-        Using model's sentiment analysis, cal MAE, ACC, F_score in mosei dataset
-
-        return acc, MAE, F_score
-    """
-    mae = np.mean(np.absolute(preds - y_test))
-
-    preds = preds >= 0
-    y_test = y_test >= 0
-
-    f_score = f1_score(y_test, preds, average="weighted")
-    acc = accuracy_score(y_test, preds)
-
-    return acc, mae, f_score
-
-def train(model,trainDataset,valDataset,testDataset,optimizer,scheduler,tokenizer):
-    """
-    Train using train_epoch, eval_epoch, test_score_model.
-
-    Adopt EarlyStopping checking valid loss.
-    """
-    val_losses = []
-    test_accuracy = []
-
-    model_save_path = utils.make_date_dir("./model_save")
-    logger.info("Model save path: {}".format(model_save_path))
-
-    best_loss = float('inf')
-    best_acc = 0
-    patience = 0
-
-    if args.num_labels == 1:
-        test_score = test_MSE_score_model
-    else:
-        test_score = test_CE_score_model
-
-    for epoch in range(int(args.n_epochs)):
-        patience += 1
-
-        logger.info("=====================Train======================")
-        train_loss,text_loss,visual_loss,speech_loss,label_loss = train_epoch(model,trainDataset,optimizer,scheduler,tokenizer)
-        logger.info("[Train Epoch {}] Joint Loss : {} Text Loss : {} Visual Loss : {} Speech Loss : {} Label Loss : {}".format(epoch+1,train_loss,text_loss,visual_loss,speech_loss,label_loss))
-
-        logger.info("=====================Valid======================")
-        valid_loss,text_loss,visual_loss,speech_loss,label_loss,preds,labels = eval_epoch(model,valDataset,optimizer,scheduler,tokenizer)
-        logger.info("[Val Epoch {}] Joint Loss : {} Text Loss : {} Visual Loss : {} Speech Loss : {} Label Loss : {}".format(epoch+1,valid_loss,text_loss,visual_loss,speech_loss,label_loss))
-
-        logger.info("=====================Test======================")
-        test_acc,test_mae,test_f_score = test_score(preds,labels)
-
-        logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_f_score))
-
-        if test_acc > best_acc:
-            torch.save(model.state_dict(),os.path.join(model_save_path,'model_'+str(epoch+1)+".pt"))
-            best_epoch = epoch
-            best_acc = test_acc
-            best_mae = test_mae
-            best_f_score = test_f_score
-            patience = 0
-
-        if patience == 10:
-            break
-
-        val_losses.append(valid_loss)
-        test_accuracy.append(test_acc)
-
-    logger.info("\n[Best Epoch {}] Best_ACC : {}, Best_MAE : {}, Best_F_Score: {}".format(best_epoch+1, best_acc, best_mae, best_f_score))
-
+    return (train_dataset, test_dataset, num_train_optim_steps, tokenizer)
 
 def main():
     logger.info("======================Load and Split Dataset======================")
-    (
-        trainDataset,
-        valDataset,
-        testDataset,
-        numTrainOptimizationSteps,
-        tokenizer
-    ) = loadDataset()
+    if args.dataset == 'meld':
+        (
+            train_dataset,
+            val_dataset,
+            test_dataset,
+            num_train_optim_steps,
+            tokenizer,
+        ) = load_MELD_dataset()
+        test_dataset: Dataset = None
+    else:
+        (
+            train_dataset,
+            val_dataset,
+            test_dataset,
+            num_train_optim_steps,
+            tokenizer
+        ) = load_dataset()
 
     logger.info("======================Prepare For Training======================")
-    model, optimizer, scheduler = prepareForTraining(numTrainOptimizationSteps)
+    model, optimizer, scheduler = prepareForTraining(num_train_optim_steps)
     
-    train(model, trainDataset, valDataset, testDataset, optimizer, scheduler,tokenizer)
+    train(args, model, train_dataset, val_dataset, test_dataset, optimizer, scheduler, tokenizer, logger)
 
 if __name__=="__main__":
     try:

@@ -46,15 +46,16 @@ class MMBertDataset(Dataset):
 
             return text_sentence, text_label, text_token_type_ids, tAv_sentence, tAv_label, tAv_token_type_ids, tAs_sentence, tAs_label, tAs_token_type_ids
     """
-    def __init__(self,tokenizer,features,dataset,task):
+    def __init__(self,tokenizer,features,dataset,task, num_labels):
         self.tokenizer = tokenizer
         self.items = features
         self.total_item = self.count()
         self.dataset =dataset
         self.task = task
+        self.num_labels = num_labels
         if self.dataset =='mosi':
             self.VISUALDIM = MOSIVISUALDIM
-        elif self.dataset == 'mosei':
+        elif self.dataset == 'mosei' or self.dataset == 'iemocap':
             self.VISUALDIM = MOSEIVISUALDIM
 
     
@@ -90,6 +91,9 @@ class MMBertDataset(Dataset):
                 pass
             elif mode == '1':
                 return torch.tensor(sentiment)/3
+        elif self.dataset == 'iemocap':
+            if mode == '2':
+                return torch.argmax(torch.argmax(torch.tensor(sentiment),dim=-1))
 
     def create_concat_joint_sentence(self, i, mode, max_token_len = -1):
         """
@@ -128,7 +132,7 @@ class MMBertDataset(Dataset):
             
         assert pairIndex != -1
 
-        sentiment = self.sentiment_selection(self.items[i][1][0],"1")
+        sentiment = self.sentiment_selection(self.items[i][1][0],str(self.num_labels))
 
         if i == len(self.items)-1:
             firstIndex = i
@@ -167,7 +171,7 @@ class MMBertDataset(Dataset):
         To be..
         """
         firstSentence = self.items[i][0][0]
-        sentiment = self.sentiment_selection(self.items[i][1][0],"1")
+        sentiment = self.sentiment_selection(self.items[i][1][0],str(self.num_labels))
         label = 0
         
         firstTokenTypeIds =  np.zeros(len(firstSentence))

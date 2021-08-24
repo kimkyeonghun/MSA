@@ -7,7 +7,6 @@ import mmsdk
 import pickle
 import argparse
 import numpy as np
-from tqdm import tqdm_notebook
 from mmsdk import mmdatasdk as md
 from subprocess import check_call, CalledProcessError
 
@@ -55,8 +54,6 @@ def download_dataset(datasetName):
     TESTSPLIT = DATASET.standard_folds.standard_test_fold
 
     return TRAINSPLIT, VALSPLIT, TESTSPLIT
-
-
 
 def prepare_save(features, dataset, TRAINSPLIT, VALSPLIT, TESTSPLIT):
 

@@ -1,5 +1,43 @@
 from torch.nn.utils.rnn import pad_sequence
 import torch
+
+from config import DEVICE
+
+def mask_tokens(inputs, tokenizer, args):
+    """
+        Need more modify because of Joint sentence dimension error
+    """
+    if tokenizer.mask_token is None:
+        raise ValueError(
+            "This tokenizer does not have a mask token which is necessary for masked language modeling. Remove the --mlm flag"
+        )
+    
+    labels = inputs.clone()
+    probability_matrix = torch.full(labels.shape,args.mlm_probability, device = DEVICE)
+    special_tokens_mask =[
+        tokenizer.get_special_tokens_mask(val,already_has_special_tokens=True) for val in labels.tolist()
+    ]
+
+    #Shape probelm
+    #RuntimeError: The expanded size of the tensor (35) must match the existing size (51) at non-singleton dimension 2.  Target sizes: [4, 51, 35].  Tensor sizes: [4, 51]
+    probability_matrix.masked_fill_(torch.tensor(special_tokens_mask,dtype=torch.bool,device=DEVICE),value=0.0)
+    if tokenizer._pad_token is not None:
+        padding_mask = labels.eq(tokenizer.pad_token_id)
+        probability_matrix.masked_fill(padding_mask.cuda(), value=0.0)
+    masked_indices = torch.bernoulli(probability_matrix).bool()
+    labels[~masked_indices] = -100
+
+    indices_replaced = torch.bernoulli(torch.full(labels.shape,0.8,device=DEVICE)).bool() & masked_indices
+    #Check this line necessary
+    inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
+
+    # indices_random = torch.bernoulli(torch.full(labels.shape,0.5,device=DEVICE)).bool() & masked_indices & ~indices_replaced
+    # # Must make total_vocab_size in globals
+    # random_words = torch.randint(config.total_vocab_size,labels.shape,dtype = torch.long,device=DEVICE)
+    # inputs[indices_random] = random_words[indices_random]
+
+    return inputs,labels
+
 def pad_example(examples,padding_value=0):
     #padding_value will be tokenizer.pad_token_id
     """
@@ -65,10 +103,17 @@ def collate(examples):
         speech_sentiment[i] = ss
         rawData[i] = raw
 
+    if text_sentiment[0].dtype==torch.int64:
+        text_sentiment = torch.tensor(text_sentiment,dtype = torch.long)
+        visual_sentiment = torch.tensor(visual_sentiment,dtype = torch.long)
+        speech_sentiment = torch.tensor(speech_sentiment,dtype = torch.long)
+    else:
+        text_sentiment = torch.tensor(text_sentiment,dtype = torch.float)
+        visual_sentiment = torch.tensor(visual_sentiment,dtype = torch.float)
+        speech_sentiment = torch.tensor(speech_sentiment,dtype = torch.float)
+
     #padding text and make attention_mask
-    #print(text_examples[0])
     padded_text_ids = pad_example(text_examples)
-    #print(padded_text_ids[0])
     text_attention_mask = torch.ones(padded_text_ids.shape,dtype=torch.int64)
     #padding part is masking with 0.
     text_attention_mask[(padded_text_ids == 0)] = 0
@@ -90,8 +135,8 @@ def collate(examples):
     speechWithtext_attention_mask[(torch.tensor(tWs_examples)==0)]==0
 
     # MSE(text_sentiment - > torch.float), CE (torch.long)
-    return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask, torch.tensor(text_sentiment,dtype = torch.float),\
-    torch.tensor(tWv_examples), torch.tensor(visual_examples), torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0), visual_attention_mask, torch.tensor(visual_sentiment,dtype = torch.float),\
-    torch.tensor(tWs_examples), torch.tensor(speech_examples), torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0), speech_attention_mask, torch.tensor(speech_sentiment,dtype = torch.long),\
-    visualWithtext_attention_mask, speechWithtext_attention_mask,rawData
-    
+    return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask, text_sentiment,\
+    torch.tensor(tWv_examples), torch.tensor(visual_examples), torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0), visual_attention_mask, visual_sentiment,\
+    torch.tensor(tWs_examples), torch.tensor(speech_examples), torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0), speech_attention_mask, speech_sentiment,\
+    visualWithtext_attention_mask, speechWithtext_attention_mask, rawData
+        

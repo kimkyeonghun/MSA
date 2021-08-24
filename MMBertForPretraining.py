@@ -5,7 +5,7 @@ from transformers.modeling_bert import BertEmbeddings, BertEncoder, BertPooler
 
 from transformers.modeling_utils import ModuleUtilsMixin
 
-from MMBertEmbedding import JointEmbeddings
+from MMBertEmbedding import JointEmbeddings, IEMOCAPEmbeddings
 
 import torch
 
@@ -20,12 +20,14 @@ class MMBertModel(BertPreTrainedModel):
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
+        self.iemocap = IEMOCAPEmbeddings()
 
         #self.Linear_v = nn.Linear()
 
         self.init_weights()
 
     def set_joint_embeddings(self, dataset):
+        self.dataset = dataset
         self.jointEmbeddings = JointEmbeddings(self.config.hidden_size,0.5, dataset)
 
     def get_input_embeddings(self):
@@ -246,7 +248,7 @@ class MMBertModel(BertPreTrainedModel):
             attention_mask = torch.ones(input_shape,device = device)
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_shape,dtype=torch.float,device=device)
-        
+        attention_mask = torch.tensor(attention_mask,dtype=float)
         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask,input_shape,device,joint)
 
         if joint:
@@ -265,12 +267,20 @@ class MMBertModel(BertPreTrainedModel):
 
         head_mask = self.get_head_mask(head_mask,self.config.num_hidden_layers)
 
-        embedding_output = self.embeddings(
-                input_ids=input_ids.long(), position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
-            )
+        if self.dataset == 'iemocap':
+            embedding_output = self.iemocap(input_ids)
+        else:
+            embedding_output = self.embeddings(
+                    input_ids=input_ids.long(), position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
+                )
+            #print("embedding_output",embedding_output.shape)
             
         if joint:
             embedding_output = self.jointEmbeddings(embedding_output, pair_ids, token_type_ids=token_type_ids)
+
+        # print(embedding_output.shape)
+        # print(extended_attention_mask.shape)
+        # print(len(head_mask))
 
         encoder_outputs =self.encoder(
             embedding_output,
@@ -316,8 +326,12 @@ class MMBertForPretraining(BertForPreTraining):
         self.GRUClaassifier = nn.GRU(config.hidden_size,config.hidden_size,batch_first=True)
         self.classifier1_1 = nn.Linear(config.hidden_size*3,config.hidden_size*1)
         self.classifier1_2 = nn.Linear(config.hidden_size*1,self.num_labels)
-        self.classifier2 = nn.Linear(config.hidden_size*2,self.num_labels)
+        self.attn = nn.Linear(config.hidden_size*2,config.hidden_size*1)
         self.classifier3 = nn.Linear(config.hidden_size*1,self.num_labels)
+        self.classifier3_1 = nn.Linear(config.hidden_size*1,self.num_labels)
+        self.classifier3_2 = nn.Linear(config.hidden_size*1,self.num_labels)
+        self.relu = nn.ReLU()
+        self.v = nn.Linear(config.hidden_size, 1)
         self.tanh = nn.Tanh()
         self.softmax = nn.Softmax(dim=1)
         self.sigmoid = nn.Sigmoid()
@@ -403,14 +417,26 @@ class MMBertForPretraining(BertForPreTraining):
                 speech_loss = total_loss
 
         
+        # if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is not None:
+        #     #pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=-1)
+        #     pooled_output = torch.stack((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
+        #     self.GRUClaassifier.flatten_parameters()
+        #     output, _ = self.GRUClaassifier(pooled_output)
+        #     output = output.reshape(output.shape[0],-1)
+        #     temp = self.classifier1_1(output)
+        #     logits = self.classifier1_2(temp)
+        #     mlm_loss = (text_loss + visual_loss + speech_loss)/3.0
+
         if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is not None:
-            #pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=-1)
-            pooled_output = torch.stack((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
-            self.GRUClaassifier.flatten_parameters()
-            output, _ = self.GRUClaassifier(pooled_output)
-            output = output.reshape(output.shape[0],-1)
-            temp = self.classifier1_1(output)
+            visual_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, visual_pooled_output),dim=1))))
+            speech_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, speech_pooled_output),dim=1))))
+            visual_pooled_output = (visual_pooled_output*visual_pooled_score)
+            speech_pooled_output = (speech_pooled_output*speech_pooled_score)
+            pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
+            temp = self.classifier1_1(pooled_output)
             logits = self.classifier1_2(temp)
+            
+            # logits = (logits1 + logits2 + logits3)/3.0
             mlm_loss = (text_loss + visual_loss + speech_loss)/3.0
 
         if text_sentiment is not None:
@@ -424,7 +450,7 @@ class MMBertForPretraining(BertForPreTraining):
                 label_loss = loss_fct(
                     logits, text_sentiment
                     )
-                logits = torch.argmax(self.sigmoid(logits))
+                logits = torch.argmax(self.softmax(logits),dim=1)
 
         joint_loss = mlm_loss + label_loss
         outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + outputs

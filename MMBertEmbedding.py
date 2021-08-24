@@ -10,9 +10,13 @@ class JointEmbeddings(nn.Module):
 
         if dataset =='mosi':
             self.VISUALDIM = MOSIVISUALDIM
-        elif dataset =='mosei':
+        elif dataset =='mosei' or dataset == 'iemocap':
             self.VISUALDIM = MOSEIVISUALDIM
 
+        if dataset == 'iemocap':
+            TEXTDIM = 300
+        else:
+            TEXTDIM = 768
 
         self.W_cv = nn.Linear(self.VISUALDIM+TEXTDIM,TEXTDIM)
         self.W_cs = nn.Linear(SPEECHDIM+TEXTDIM,TEXTDIM)
@@ -26,7 +30,6 @@ class JointEmbeddings(nn.Module):
     def forward(self, input_embs, pair_ids , token_type_ids = None):
         assert input_embs != None, "You miss input_embs"
         assert pair_ids != None, "You miss pair_ids"
-
         concat_embs = torch.cat((input_embs,pair_ids.float()),dim=-1)
         # #print("concat_embs",concat_embs.shape)
         # #print(pair_ids.size())
@@ -57,3 +60,11 @@ class JointEmbeddings(nn.Module):
         embeddings = self.dropout(embeddings)
         
         return embeddings
+
+class IEMOCAPEmbeddings(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.W = nn.Linear(300,768)
+
+    def forward(self, input_id):
+        return self.W(input_id.float())
