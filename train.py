@@ -2,14 +2,14 @@ import os
 import pickle
 import argparse
 import logging
-from typing import Dict, Tuple
+from typing import Tuple
 
 import numpy as np
 from torch.utils.data.dataset import Dataset
 
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
 from transformers.optimization import AdamW
-#from transformers.configuration_bert import BertConfig
+from transformers.configuration_bert import BertConfig
 #from transformers.modeling_bert import BertModel
 
 from MMBertDataset import MMBertDataset
@@ -27,7 +27,7 @@ parser.add_argument("--dataset",type=str,choices=["mosi","mosei", "meld"],defaul
 parser.add_argument("--emotion",type=str,default='sentiment')
 parser.add_argument("--num_labels",type=int,default=1)
 parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-base-uncased")
-parser.add_argument("--learning_rate",type=float,default=1e-4)
+parser.add_argument("--learning_rate",type=float,default=1e-3)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=100)
 parser.add_argument("--train_batch_size",type=int,default=16)
@@ -35,7 +35,7 @@ parser.add_argument("--val_batch_size",type=int,default=4)
 parser.add_argument("--test_batch_size",type=int,default=1)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
 parser.add_argument("--mlm",type=bool,default=True)
-parser.add_argument("--mlm_probability",type=float,default = 0.15)
+parser.add_argument("--mlm_probability",type=float,default = 0.2)
 parser.add_argument("--max_seq_length",type=int, default = 100)
 
 args = parser.parse_args()
@@ -46,7 +46,6 @@ else:
     VISUALDIM = MOSEIVISUALDIM
 
 logger, log_dir = utils.get_logger(os.path.join('./logs'))
-
 
 
 def prepareForTraining(numTrainOptimizationSteps):
@@ -64,9 +63,10 @@ def prepareForTraining(numTrainOptimizationSteps):
         return model : class MMBertForPretraining, optimizer : Admaw, scheduler : warmup_start
     """
     model = MMBertForPretraining.from_pretrained(args.model, num_labels=args.num_labels)
+    # configurations = BertConfig()
+    # configurations.num_labels = args.num_labels
+    # model = MMBertForPretraining(configurations)
     model.bert.set_joint_embeddings(args.dataset)
-    #model = torch.nn.DataParallel(model)
-    #model.to(DEVICE)
     model.cuda()
     param_optimizer = list(model.named_parameters())
     no_decay = ['bias','LayerNorm.bias','LayerNorm.weight']
@@ -75,7 +75,7 @@ def prepareForTraining(numTrainOptimizationSteps):
             "params" : [
                 p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
             ],
-            "weight_decay": 0.01,
+            "weight_decay": 0.05,
         },
         {
             "params" : [
@@ -150,9 +150,6 @@ def convert2features(samples: list, tokenizer: BertTokenizer):
     features = []
     for _, sample in enumerate(samples):
         (words,visual,speech), label, segment = sample
-
-        # if label == 0:
-        #     continue
         
         #Tokenize
         tokens, inversions = [],[]
@@ -166,9 +163,6 @@ def convert2features(samples: list, tokenizer: BertTokenizer):
         
         #Make same length between token, visual, speech
         newVisual, newSpeech = [],[]
-        # print(len(list(tokens)))
-        # print(visual.shape)
-        # print(speech.shape)
 
         for inv in inversions:
             newVisual.append(visual[inv,:])
@@ -176,7 +170,6 @@ def convert2features(samples: list, tokenizer: BertTokenizer):
         
         visual = np.array(newVisual)
         speech = np.array(newSpeech)
-
 
         #Truncate
         if len(tokens) > args.max_seq_length-2:
@@ -198,8 +191,12 @@ def convert2features(samples: list, tokenizer: BertTokenizer):
         )
     return features
 
-def MELD_features(data):
-    features = 0
+def MELD_features(data, mask):
+    features = []
+    for x, y, m in zip(data[0], data[1], mask):
+        features.append(
+            ((x[0],x[1], m),y)
+        )
     return features
 
 def get_tokenizer(model: str) -> BertTokenizer:
@@ -234,8 +231,8 @@ def make_dataset(data: list) -> Tuple[MMBertDataset, BertTokenizer]:
     
     return dataset, tokenizer
 
-def make_MELD_dataset(data: list) -> MMBertDataset:
-    features = MELD_features(data)
+def make_MELD_dataset(data: list, mask: np.array) -> MMBertDataset:
+    features = MELD_features(data, mask)
     tokenizer = get_tokenizer(args.model)
     dataset = MMBertDataset(tokenizer, features, args.dataset, args.emotion, args.num_labels)
     return dataset, tokenizer
@@ -295,32 +292,32 @@ def load_MELD_dataset() -> Tuple[Dataset, Dataset, Dataset, int, BertTokenizer]:
     """
     #If you don't save pkl to byte form, then you may change read mode.
     logger.info("**********Load MELD Dataset**********")
-    with open(f"./data/{args.dataset}_data.pkl",'br') as fr:
+    with open(f"{args.dataset}.pkl",'br') as fr:
         data: dict = pickle.load(fr)
         
-    train_data: list = data["train"]
-    val_data: list = data['val']
-    test_data: list = data["test"]
+    train_data, train_mask = data["train"]
+    val_data, val_mask = data['val']
+    test_data, test_mask = data["test"]
     
     logger.info("**********Split Train Dataset**********")
-    train_dataset, tokenizer = make_MELD_dataset(train_data)
+    train_dataset, tokenizer = make_MELD_dataset(train_data, train_mask)
     logger.info(f"The Length of TrainDataset : {len(train_dataset)}")
     logger.info("**********Finish Train makeDataset**********")
 
     logger.info("**********Split Valid Dataset**********")
-    val_dataset, _ = make_MELD_dataset(val_data)
+    val_dataset, _ = make_MELD_dataset(val_data, val_mask)
     logger.info(f"The Length of ValDataset : {len(val_dataset)}")
     logger.info("**********Finish Valid makeDataset**********")
 
     logger.info("**********Split Test Dataset**********")
-    test_dataset, _ = make_MELD_dataset(test_data)
+    test_dataset, _ = make_MELD_dataset(test_data, test_mask)
     logger.info(f"The Length of TestDataset : {len(test_dataset)}")
     logger.info("**********Finish Test makeDataset**********")
 
     #maybe warmup start?
     num_train_optim_steps = (int(len(train_data)/ args.train_batch_size / args.gradient_accumulation_step)) * args.n_epochs
     
-    return (train_dataset, test_dataset, num_train_optim_steps, tokenizer)
+    return (train_dataset, val_dataset, test_dataset, num_train_optim_steps, tokenizer)
 
 def main():
     logger.info("======================Load and Split Dataset======================")

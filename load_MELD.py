@@ -2,11 +2,18 @@ import numpy as np
 import pickle
 from collections import defaultdict
 from transformers import BertTokenizer
+from tqdm import tqdm
 
 max_l = 100
 
-def save(train, val, test, dataset_name):
-    allDataset = {"train": train, "val": val, "test": test}
+def save(X, Y, input_mask, dataset_name):
+    dataset = []
+    for x, y, im in zip(X, Y, input_mask):
+        dataset.append(
+            ((x,y),im)
+        )
+
+    allDataset = {"train": dataset[0], "val": dataset[1], "test": dataset[2]}
     with open('{}.pkl'.format(dataset_name),'wb') as f:
         pickle.dump(allDataset,f)
     print("Save Complete!")
@@ -60,11 +67,10 @@ def parse_MELD():
     # train_audio_emb, val_audio_emb, test_audio_emb = pickle.load(open("./MELD/audio_sentiment.pkl", 'rb'))
     
     print("Labels used for this classification: ", label_index)
-
+    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
     train_data, val_data, test_data = {}, {}, {}
-    for i in range(len(revs)):
+    for i in tqdm(range(len(revs)), desc="Iteration"):
         utterance_id = revs[i]['dialog']+"_"+revs[i]['utterance']
-        tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
         sentence_word_indices = get_word_indices(tokenizer, tokenizer.tokenize(revs[i]['text']))
         #sentence_word_indices = revs[i]['text']
         label = label_index[revs[i]['y']]
@@ -81,10 +87,6 @@ def parse_MELD():
     test_dialogue_ids = get_dialogue_ids(test_data.keys())
 
     max_utts = get_max_utts(train_dialogue_ids, val_dialogue_ids, test_dialogue_ids)
-    # print(train_dialogue_ids)
-    # print(val_dialogue_ids)
-    # print(test_dialogue_ids)
-
     dialogue_ids = (train_dialogue_ids, val_dialogue_ids, test_dialogue_ids)
     train_text_x, val_text_x, test_text_x = get_dialogue_text(dialogue_ids, train_data, val_data, test_data)
     train_audio_x, val_audio_x, test_audio_x = pickle.load(open("./MELD/audio_sentiment.pkl", 'rb'), encoding='latin1')
@@ -93,8 +95,11 @@ def parse_MELD():
         for i,(vid, utts) in enumerate(ID.items()):
             bimodal.append((text[i],audio[vid]))
         return bimodal
-
+    print(train_text_x.shape)
+    
     train_dialogue_features = concatenate_fusion(train_dialogue_ids, train_text_x, train_audio_x)
+    print(train_dialogue_features[0][0].shape)
+    print(train_dialogue_features[0][1].shape)
     val_dialogue_features = concatenate_fusion(val_dialogue_ids, val_text_x, val_audio_x)
     test_dialogue_features = concatenate_fusion(test_dialogue_ids, test_text_x, test_audio_x)
 
@@ -132,11 +137,11 @@ def parse_MELD():
     for i in range(len(test_dialogue_length)):
         test_mask[i,:test_dialogue_length[i]]=1.0
 
+    print(len(train_dialogue_features))
     X = (train_dialogue_features, val_dialogue_features, test_dialogue_features)
     y = (train_dialogue_label, val_dialogue_label, test_dialogue_label)
-    print(X)
-    print(y)
-    return X, y
+    input_mask = (train_mask, val_mask, test_mask)
+    return X, y, input_mask
     # assert False
 
     # train = []
@@ -298,6 +303,6 @@ def get_iemocap_raw(classes):
     # print(test_data.shape)
 
 if __name__ == "__main__":
-    train, val ,test = parse_MELD()
+    X, y, input_mask = parse_MELD()
     #get_iemocap_raw(None)
-    save(train, val, test, "meld")
+    save(X, y, input_mask, "meld")

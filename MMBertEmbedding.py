@@ -12,6 +12,8 @@ class JointEmbeddings(nn.Module):
             self.VISUALDIM = MOSIVISUALDIM
         elif dataset =='mosei' or dataset == 'iemocap':
             self.VISUALDIM = MOSEIVISUALDIM
+        elif dataset == 'meld':
+            self.VISUALDIM = MELDVISUALDIM
 
         if dataset == 'iemocap':
             TEXTDIM = 300
@@ -68,3 +70,20 @@ class IEMOCAPEmbeddings(nn.Module):
 
     def forward(self, input_id):
         return self.W(input_id.float())
+
+
+class MELDEmbeddings(nn.Module):
+    def __init__(self):
+        super().__init__()  
+
+    def forward(self, input_ids, position_ids, token_type_ids, inputs_embeds, embeddings):
+        input_ids = input_ids[:,:,0]
+        print(input_ids.shape)
+        print(token_type_ids.shape)
+        return embeddings(input_ids=input_ids.long(), position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds)
+        embedding_outputs = embeddings(input_ids=input_ids[:,0,:].long(), position_ids=position_ids, token_type_ids=None, inputs_embeds=inputs_embeds).unsqueeze(1)
+        print(embedding_outputs.shape)
+        for i in range(1,33):
+            embedding_output = embeddings(input_ids=input_ids[:,i,:].long(), position_ids=position_ids, token_type_ids=None, inputs_embeds=inputs_embeds)
+            embedding_outputs = torch.cat((embedding_outputs,embedding_output.unsqueeze(1)),dim=1)
+        return embedding_outputs

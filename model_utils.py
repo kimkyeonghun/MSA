@@ -102,7 +102,6 @@ def collate(examples):
         visual_sentiment[i] = vs
         speech_sentiment[i] = ss
         rawData[i] = raw
-
     if text_sentiment[0].dtype==torch.int64:
         text_sentiment = torch.tensor(text_sentiment,dtype = torch.long)
         visual_sentiment = torch.tensor(visual_sentiment,dtype = torch.long)
@@ -114,16 +113,16 @@ def collate(examples):
 
     #padding text and make attention_mask
     padded_text_ids = pad_example(text_examples)
-    text_attention_mask = torch.ones(padded_text_ids.shape,dtype=torch.int64)
+    text_attention_mask = torch.ones(padded_text_ids.shape,dtype=torch.float64)
     #padding part is masking with 0.
     text_attention_mask[(padded_text_ids == 0)] = 0
 
     #padding visual and make attention_mask
     # padded_visual_ids = pad_example(visual_examples)
-    visual_attention_mask = torch.ones(torch.tensor(visual_examples).shape,dtype=torch.int64)
+    visual_attention_mask = torch.ones(torch.tensor(visual_examples).shape,dtype=torch.float64)
     visual_attention_mask[(torch.tensor(visual_examples) == 0)] = 0
 
-    visualWithtext_attention_mask = torch.ones(torch.tensor(tWv_examples).shape,dtype=torch.int64)
+    visualWithtext_attention_mask = torch.ones(torch.tensor(tWv_examples).shape,dtype=torch.float64)
     visualWithtext_attention_mask[(torch.tensor(tWv_examples)==0)]==0
 
     #padding speech and make attention_mask

@@ -1,7 +1,7 @@
 import os
 import random
 
-from config import MOSIVISUALDIM,MOSEIVISUALDIM, SPEECHDIM, DEVICE
+from config import MOSIVISUALDIM, MOSEIVISUALDIM, MELDVISUALDIM, SPEECHDIM, DEVICE
 
 import torch
 from torch.utils.data import Dataset
@@ -57,7 +57,8 @@ class MMBertDataset(Dataset):
             self.VISUALDIM = MOSIVISUALDIM
         elif self.dataset == 'mosei' or self.dataset == 'iemocap':
             self.VISUALDIM = MOSEIVISUALDIM
-
+        elif self.dataset == 'meld':
+            self.VISUALDIM = MELDVISUALDIM
     
     def sentiment_selection(self,sentiment,mode):
         if self.dataset == 'mosei':
@@ -68,8 +69,7 @@ class MMBertDataset(Dataset):
                     else:
                         return torch.tensor([0])
                 elif mode == '7':
-                    #To be add....
-                    pass
+                    return torch.tensor(sentiment[0])
                 elif mode == '1':
                     return torch.tensor(sentiment[0])/3
             else:
@@ -87,13 +87,15 @@ class MMBertDataset(Dataset):
                 else:
                     return torch.tensor([0])
             elif mode =='7':
-                #To be add....
-                pass
+                return torch.tensor(sentiment)
             elif mode == '1':
                 return torch.tensor(sentiment)/3
         elif self.dataset == 'iemocap':
             if mode == '2':
                 return torch.argmax(torch.argmax(torch.tensor(sentiment),dim=-1))
+        elif self.dataset == 'meld':
+            if mode == '3':
+                return torch.tensor(np.where(np.array(sentiment)==1)[0]) 
 
     def create_concat_joint_sentence(self, i, mode, max_token_len = -1):
         """
@@ -195,7 +197,7 @@ class MMBertDataset(Dataset):
         return self.total_item
     
     def __getitem__(self,i):
-        text_sentence, text_label, text_token_type_ids, text_sentiment,rawData = self.create_text_sentence(i,max_token_len=75)
+        text_sentence, text_label, text_token_type_ids, text_sentiment, rawData = self.create_text_sentence(i,max_token_len=75)
         text_sentence2,visual_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment = self.create_concat_joint_sentence(i,'visual',max_token_len = -1)
         text_sentence3,speech_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment = self.create_concat_joint_sentence(i,'speech',max_token_len = -1)
 
