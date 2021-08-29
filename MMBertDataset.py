@@ -1,13 +1,10 @@
-import os
 import random
-
-from config import MOSIVISUALDIM, MOSEIVISUALDIM, MELDVISUALDIM, SPEECHDIM, DEVICE
 
 import torch
 from torch.utils.data import Dataset
 import numpy as np
 
-from transformers.modeling_bert import BertEmbeddings
+from config import MOSIVISUALDIM, MOSEIVISUALDIM, MELDVISUALDIM, CMUSPEECHDIM, DEVICE, FUNNYVISUALDIM, FUNNYSPEECHDIM
 
 cudas = DEVICE
 
@@ -55,10 +52,15 @@ class MMBertDataset(Dataset):
         self.num_labels = num_labels
         if self.dataset =='mosi':
             self.VISUALDIM = MOSIVISUALDIM
+            self.SPEECHDIM = CMUSPEECHDIM
         elif self.dataset == 'mosei' or self.dataset == 'iemocap':
             self.VISUALDIM = MOSEIVISUALDIM
+            self.SPEECHDIM = CMUSPEECHDIM
         elif self.dataset == 'meld':
             self.VISUALDIM = MELDVISUALDIM
+        elif self.dataset == 'ur_funny':
+            self.VISUALDIM = FUNNYVISUALDIM
+            self.SPEECHDIM = FUNNYSPEECHDIM
     
     def sentiment_selection(self,sentiment,mode):
         if self.dataset == 'mosei':
@@ -96,6 +98,13 @@ class MMBertDataset(Dataset):
         elif self.dataset == 'meld':
             if mode == '3':
                 return torch.tensor(np.where(np.array(sentiment)==1)[0]) 
+        elif self.dataset == 'ur_funny':
+            if mode == '2':
+                if sentiment ==1:
+                    return torch.tensor([1])
+                else:
+                    return torch.tensor([0])
+
 
     def create_concat_joint_sentence(self, i, mode, max_token_len = -1):
         """
@@ -130,7 +139,7 @@ class MMBertDataset(Dataset):
             pairDim = self.VISUALDIM
         elif mode == 'speech':
             pairIndex = 2
-            pairDim = SPEECHDIM
+            pairDim = self.SPEECHDIM
             
         assert pairIndex != -1
 

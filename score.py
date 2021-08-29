@@ -1,26 +1,24 @@
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score
-import torch
-from torch import nn
 
 def ACC7(value):
     """
     for 7 label
     """
     for i,v in enumerate(value):
-        if 3*v < -2:
+        if v < -2:
             value[i] = -3
-        elif -2 <= 3*v < -1:
+        elif -2 <= v < -1:
             value[i] = -2
-        elif -1 <= 3*v < 0:
+        elif -1 <= v < 0:
             value[i] = -1
         elif v==0:
             value[i] = 0
-        elif 0 < 3*v <= 1:
+        elif 0 < v <= 1:
             value[i] = 1
-        elif 1 < 3*v <= 2:
+        elif 1 < v <= 2:
             value[i] = 2
-        elif 3*v > 2:
+        elif v > 2:
             value[i] = 3
     return value
 

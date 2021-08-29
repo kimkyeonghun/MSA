@@ -1,7 +1,7 @@
-import os
-import pickle
 import argparse
 import logging
+import os
+import pickle
 from typing import Tuple
 
 import numpy as np
@@ -12,10 +12,10 @@ from transformers.optimization import AdamW
 from transformers.configuration_bert import BertConfig
 #from transformers.modeling_bert import BertModel
 
+from config import MOSEIVISUALDIM, MOSIVISUALDIM, CMUSPEECHDIM, FUNNYVISUALDIM, FUNNYSPEECHDIM
 from MMBertDataset import MMBertDataset
 #To modify model name MMBertForPretraining -> MMBertForPreTraining
 from MMBertForPretraining import MMBertForPretraining
-from config import MOSEIVISUALDIM, MOSIVISUALDIM, SPEECHDIM
 from trainer import train
 import utils
 
@@ -23,28 +23,32 @@ import utils
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 parser= argparse.ArgumentParser()
-parser.add_argument("--dataset",type=str,choices=["mosi","mosei", "meld"],default='mosei')
+parser.add_argument("--dataset",type=str,choices=["mosi","mosei", "meld", "ur_funny"],default='mosei')
 parser.add_argument("--emotion",type=str,default='sentiment')
 parser.add_argument("--num_labels",type=int,default=1)
-parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-base-uncased")
-parser.add_argument("--learning_rate",type=float,default=1e-3)
+parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-large-uncased")
+parser.add_argument("--learning_rate",type=float,default=1e-5)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=100)
-parser.add_argument("--train_batch_size",type=int,default=16)
+parser.add_argument("--train_batch_size",type=int,default=8)
 parser.add_argument("--val_batch_size",type=int,default=4)
 parser.add_argument("--test_batch_size",type=int,default=1)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
 parser.add_argument("--mlm",type=bool,default=True)
-parser.add_argument("--mlm_probability",type=float,default = 0.2)
+parser.add_argument("--mlm_probability",type=float,default = 0.15)
 parser.add_argument("--max_seq_length",type=int, default = 100)
 
 args = parser.parse_args()
 
 if args.dataset == 'mosi':
     VISUALDIM = MOSIVISUALDIM
+    SPEECHDIM = CMUSPEECHDIM
+elif args.dataset == 'ur_funny':
+    VISUALDIM = FUNNYVISUALDIM
+    SPEECHDIM = FUNNYSPEECHDIM
 else:
     VISUALDIM = MOSEIVISUALDIM
-
+    SPEECHDIM = CMUSPEECHDIM
 logger, log_dir = utils.get_logger(os.path.join('./logs'))
 
 
@@ -75,7 +79,7 @@ def prepareForTraining(numTrainOptimizationSteps):
             "params" : [
                 p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
             ],
-            "weight_decay": 0.05,
+            "weight_decay": 0.15,
         },
         {
             "params" : [

@@ -1,8 +1,8 @@
+
+import datetime
 import os
 import logging
 import logging.handlers
-
-import datetime
 
 def get_logger(log_path='./logs'):
 
@@ -31,7 +31,6 @@ def get_logger(log_path='./logs'):
     logger.setLevel(logging.INFO)
     logger.info('Writing logs at {}'.format(os.path.join(log_path, name)))
     return logger, os.path.join(log_path, name)
-
 
 def make_date_dir(path):
     """

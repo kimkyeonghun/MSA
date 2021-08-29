@@ -10,21 +10,21 @@ class JointEmbeddings(nn.Module):
 
         if dataset =='mosi':
             self.VISUALDIM = MOSIVISUALDIM
+            self.SPEECHDIM = CMUSPEECHDIM
         elif dataset =='mosei' or dataset == 'iemocap':
             self.VISUALDIM = MOSEIVISUALDIM
+            self.SPEECHDIM = CMUSPEECHDIM
         elif dataset == 'meld':
             self.VISUALDIM = MELDVISUALDIM
-
-        if dataset == 'iemocap':
-            TEXTDIM = 300
-        else:
-            TEXTDIM = 768
+        elif dataset == 'ur_funny':
+            self.VISUALDIM = FUNNYVISUALDIM
+            self.SPEECHDIM = FUNNYSPEECHDIM
 
         self.W_cv = nn.Linear(self.VISUALDIM+TEXTDIM,TEXTDIM)
-        self.W_cs = nn.Linear(SPEECHDIM+TEXTDIM,TEXTDIM)
+        self.W_cs = nn.Linear(self.SPEECHDIM+TEXTDIM,TEXTDIM)
 
         self.Wv = nn.Linear(self.VISUALDIM,TEXTDIM)
-        self.Ws = nn.Linear(SPEECHDIM,TEXTDIM)
+        self.Ws = nn.Linear(self.SPEECHDIM,TEXTDIM)
 
         self.LayerNorm = nn.LayerNorm(hidden_size)
         self.dropout = nn.Dropout(dropout_prob)
@@ -52,7 +52,7 @@ class JointEmbeddings(nn.Module):
         #print(pair_ids.size())
         if pair_ids.size()[-1] == self.VISUALDIM:
             pair_embeds = F.relu(self.Wv(pair_ids.float()))
-        elif pair_ids.size()[-1] == SPEECHDIM:
+        elif pair_ids.size()[-1] == self.SPEECHDIM:
             pair_embeds = F.relu(self.Ws(pair_ids.float()))
         else:
             raise Exception('Wrong Dimension')

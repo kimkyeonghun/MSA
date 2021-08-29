@@ -1,14 +1,13 @@
-from constants import SDK_PATH, DATA_PATH, WORD_EMB_PATH, CACHE_PATH
+from constants import SDK_PATH, DATA_PATH
 import sys
 
 import os
 import re
-import mmsdk
 import pickle
 import argparse
 import numpy as np
 from mmsdk import mmdatasdk as md
-from subprocess import check_call, CalledProcessError
+from subprocess import check_call
 
 
 def avg(intervals: np.array, features: np.array) -> np.array:

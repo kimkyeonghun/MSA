@@ -1,16 +1,12 @@
-from transformers import BertForPreTraining
-from transformers.modeling_bert import BertPreTrainingHeads, BertPreTrainedModel
-
-from transformers.modeling_bert import BertEmbeddings, BertEncoder, BertPooler
-
-from transformers.modeling_utils import ModuleUtilsMixin
-
-from MMBertEmbedding import JointEmbeddings, IEMOCAPEmbeddings, MELDEmbeddings
+from typing import List, Tuple
 
 import torch
-
 from torch import nn
 
+from transformers import BertForPreTraining
+from transformers.modeling_bert import BertPreTrainingHeads, BertPreTrainedModel, BertEmbeddings, BertEncoder, BertPooler 
+
+from MMBertEmbedding import JointEmbeddings, IEMOCAPEmbeddings, MELDEmbeddings
 
 class MMBertModel(BertPreTrainedModel):
     def __init__(self,config):
@@ -51,7 +47,7 @@ class MMBertModel(BertPreTrainedModel):
         except StopIteration:
             # For nn.DataParallel compatibility in PyTorch 1.5
 
-            def find_tensor_attributes(module: nn.Module) -> List[Tuple[str, Tensor]]:
+            def find_tensor_attributes(module: nn.Module) -> List[Tuple[str, torch.Tensor]]:
                 tuples = [(k, v) for k, v in module.__dict__.items() if torch.is_tensor(v)]
                 return tuples
 
@@ -329,7 +325,7 @@ class MMBertForPretraining(BertForPreTraining):
         self.num_labels = config._num_labels
         self.GRUClaassifier = nn.GRU(config.hidden_size,config.hidden_size,batch_first=True)
         self.classifier1_1 = nn.Linear(config.hidden_size*3,config.hidden_size*1)
-        self.classifier1_2 = nn.Linear(config.hidden_size*1,1)
+        self.classifier1_2 = nn.Linear(config.hidden_size*1,2)
         self.attn = nn.Linear(config.hidden_size*2,config.hidden_size*1)
         self.classifier3 = nn.Linear(config.hidden_size*1,self.num_labels)
         self.classifier3_1 = nn.Linear(config.hidden_size*1,self.num_labels)
@@ -435,8 +431,12 @@ class MMBertForPretraining(BertForPreTraining):
             speech_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, speech_pooled_output),dim=1))))
             visual_pooled_output = (visual_pooled_output*visual_pooled_score)
             speech_pooled_output = (speech_pooled_output*speech_pooled_score)
-            pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
-            temp = self.classifier1_1(pooled_output)
+            #pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
+            pooled_output = torch.stack((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
+            self.GRUClaassifier.flatten_parameters()
+            output, _ = self.GRUClaassifier(pooled_output)
+            output = output.reshape(output.shape[0],-1)
+            temp = self.classifier1_1(output)
             logits = self.classifier1_2(temp)
             
             # logits = (logits1 + logits2 + logits3)/3.0
@@ -454,7 +454,7 @@ class MMBertForPretraining(BertForPreTraining):
                 label_loss = loss_fct(
                     logits, text_sentiment
                     )
-                logits = torch.argmax(self.softmax(logits),dim=1)
+                logits = torch.argmax(self.sigmoid(logits),dim=1)
 
         joint_loss = mlm_loss + label_loss
         outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + outputs

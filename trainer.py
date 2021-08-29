@@ -284,7 +284,7 @@ def test_MSE_score_model(preds,y_test, use_zero=False):
 
         return acc, MAE, F_score
     """
-    mae = np.mean(np.absolute(preds - y_test))
+    mae = np.mean(np.absolute(np.tanh(preds) - np.tanh(y_test)))
 
     preds = preds >= 0
     y_test = y_test >= 0
