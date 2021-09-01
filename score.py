@@ -1,7 +1,10 @@
-import numpy as np
-from sklearn.metrics import accuracy_score, f1_score
+import argparse
+import os
 
-def ACC7(value):
+import numpy as np
+from sklearn.metrics import accuracy_score, f1_score, classification_report
+
+def ACC7(value, true):
     """
     for 7 label
     """
@@ -20,7 +23,23 @@ def ACC7(value):
             value[i] = 2
         elif v > 2:
             value[i] = 3
-    return value
+
+    for i,v in enumerate(true):
+        if v < -2:
+            true[i] = -3
+        elif -2 <= v < -1:
+            true[i] = -2
+        elif -1 <= v < 0:
+            true[i] = -1
+        elif v==0:
+            true[i] = 0
+        elif 0 < v <= 1:
+            true[i] = 1
+        elif 1 < v <= 2:
+            true[i] = 2
+        elif v > 2:
+            true[i] = 3
+    return np.sum(value==true)/float(len(true))
 
 def ACC3(preds,y_test):
     """
@@ -42,32 +61,75 @@ def ACC3(preds,y_test):
             else:
                 newYtest.append(0)
 
-    return newPreds,newYtest
+    return np.array(newPreds),np.array(newYtest)
+
+def multiclass_acc(preds, truths):
+    """
+    Compute the multiclass accuracy w.r.t. groundtruth
+    :param preds: Float array representing the predictions, dimension (N,)
+    :param truths: Float/int array representing the groundtruth classes, dimension (N,)
+    :return: Classification accuracy
+    """
+    return np.sum(np.round(preds) == np.round(truths)) / float(len(truths))
+
+def MISA(test_truth,test_preds):
+    non_zeros = np.array([i for i, e in enumerate(test_truth) if e != 0])
+
+    test_preds = test_preds.squeeze(-1)
+
+    test_preds_a7 = np.clip(test_preds, a_min=-3., a_max=3.)
+    test_truth_a7 = np.clip(test_truth, a_min=-3., a_max=3.)
+
+    mae = np.mean(np.absolute(test_preds - test_truth))   # Average L1 distance between preds and truths
+    corr = np.corrcoef(test_preds, test_truth)[0][1]
+    mult_a7 = multiclass_acc(test_preds_a7, test_truth_a7)
+    my_a7 = ACC7(test_preds, test_truth)
+    
+    f_score = f1_score((test_preds[non_zeros] > 0), (test_truth[non_zeros] > 0), average='weighted')
+    
+    # pos - neg
+    binary_truth = (test_truth[non_zeros] > 0)
+    binary_preds = (test_preds[non_zeros] > 0)
+
+    tt = sum((binary_preds==1)&(binary_truth==1))
+    ft = sum((binary_preds==1)&(binary_truth==0))
+    tf = sum((binary_preds==0)&(binary_truth==1))
+    ff = sum((binary_preds==0)&(binary_truth==0))
+
+    table = [[tt,tf],[ft,ff]]
+
+    from statsmodels.stats.contingency_tables import mcnemar
+    print(mcnemar(table, exact=False))
+
+    if True:
+        print("\n")
+        print("mae: ", mae)
+        print("corr: ", corr)
+        print("mult_acc: ", mult_a7)
+        print("My ACC7: ", my_a7)
+        print("\nClassification Report (pos/neg) :")
+        print(classification_report(binary_truth, binary_preds, digits=3))
+        print("Accuracy (pos/neg) ", accuracy_score(binary_truth, binary_preds))
+    
+    # non-neg - neg
+    binary_truth = (test_truth >= 0)
+    binary_preds = (test_preds >= 0)
+
+    if True:
+        print("Classification Report (non-neg/neg) :")
+        print(classification_report(binary_truth, binary_preds, digits=3))
+        print("Accuracy (non-neg/neg) ", accuracy_score(binary_truth, binary_preds))
 
 def main():
-    preds = np.load('./predict.npy')
-    labels = np.load('./target.npy')
-    #print(preds - labels)
-    mae_preds = np.tanh(preds)
-    mae_labels = np.tanh(labels)
-    mae = np.mean(np.absolute(mae_preds - mae_labels))
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--path',type=str)
+    args = parser.parse_args()
 
-    y_test7 = ACC7(labels)
-    preds7 = ACC7(preds)
+    preds = np.load(os.path.join('numpy_save',args.path,'predict.npy'))
+    labels = np.load(os.path.join('numpy_save',args.path,'target.npy'))
+    print(np.unique(np.round(preds)))
+    print(np.unique(np.round(labels)))
 
-    acc7 = accuracy_score(y_test7, preds7)
-
-    preds2 = preds >= 0
-    y_test2 = labels >= 0
-
-    acc2 = accuracy_score(y_test2, preds2)
-    f_score2 = f1_score(y_test2, preds2, average="weighted")
-
-    preds3, y_test3 = ACC3(preds, labels)
-
-    acc3 = accuracy_score(y_test3, preds3)
-    f_score3 = f1_score(y_test3, preds3, average="weighted")
-
-    print("Test_ACC7 : {}, Test_ACC3 : {}, Test_ACC2 : {}, Test_MAE : {}, Test_F_Score2: {}, Test_F_Score3: {}".format(acc7,acc3,acc2,mae,f_score2, f_score3))
+    MISA(labels,preds)
 if __name__ == '__main__':
     main()
