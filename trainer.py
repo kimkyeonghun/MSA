@@ -284,7 +284,7 @@ def test_MSE_score_model(preds,y_test, use_zero=False):
 
         return acc, MAE, F_score
     """
-    mae = np.mean(np.absolute(np.tanh(preds) - np.tanh(y_test)))
+    mae = np.mean(np.absolute(preds - y_test))
 
     preds = preds >= 0
     y_test = y_test >= 0
@@ -341,9 +341,11 @@ def train(args, model, train_dataset, val_dataset, test_dataset, optimizer, sche
             best_labels = labels
             patience = 0
 
-        if patience == 10:
-            np.save('predict.npy',best_preds)
-            np.save('target.npy',best_labels)
+        if patience == 20:
+            numpy_save_path = utils.make_date_dir("./numpy_save")
+            logger.info("Model save path: {}".format(numpy_save_path))
+            np.save(os.path.join(numpy_save_path,'predict.npy'),best_preds)
+            np.save(os.path.join(numpy_save_path,'target.npy'),best_labels)
             break
 
         val_losses.append(valid_loss)
