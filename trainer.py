@@ -50,33 +50,9 @@ def train_epoch(args, model, traindata, optimizer, scheduler, tokenizer):
         # tws_ids = tws_ids.to(DEVICE)
 
         #if args.mlm is true, do masking.
-        if args.dataset == 'meld':
-            text_inputs, text_mask_labels = model_utils.mask_tokens(text_ids[:,0,:],tokenizer,args) if args.mlm else (text_ids, text_ids)
-            twv_inputs, visual_mask_labels = model_utils.mask_tokens(twv_ids[:,0,:],tokenizer,args) if args.mlm else (text_ids, text_ids)
-            tws_inputs, speech_mask_labels = model_utils.mask_tokens(tws_ids[:,0,:],tokenizer,args) if args.mlm else (text_ids, text_ids)
-            text_inputs = text_inputs.unsqueeze(1)
-            text_mask_labels = text_mask_labels.unsqueeze(1)
-            twv_inputs = twv_inputs.unsqueeze(1)
-            visual_mask_labels = visual_mask_labels.unsqueeze(1)
-            tws_inputs = tws_inputs.unsqueeze(1)
-            speech_mask_labels = speech_mask_labels.unsqueeze(1)
-            for i in range(1,33):
-                text_input, text_mask_label = model_utils.mask_tokens(text_ids[:,i,:],tokenizer,args) if args.mlm else (text_ids, text_ids)
-                twv_id, visual_mask_label = model_utils.mask_tokens(twv_ids[:,i,:],tokenizer,args) if args.mlm else (twv_ids, twv_ids)
-                tws_id, speech_mask_label = model_utils.mask_tokens(tws_ids[:,i,:],tokenizer,args) if args.mlm else (tws_ids, tws_ids)
-                text_inputs = torch.cat((text_inputs,text_input.unsqueeze(1)),dim=1)
-                text_mask_labels = torch.cat((text_mask_labels,text_mask_label.unsqueeze(1)),dim=1)
-                twv_inputs = torch.cat((twv_inputs,twv_id.unsqueeze(1)),dim=1)
-                visual_mask_labels = torch.cat((visual_mask_labels,visual_mask_label.unsqueeze(1)),dim=1)
-                tws_inputs = torch.cat((tws_inputs,tws_id.unsqueeze(1)),dim=1)
-                speech_mask_labels = torch.cat((speech_mask_labels,speech_mask_label.unsqueeze(1)),dim=1)
-        # print(visual_ids.shape)
-            twv_ids = twv_inputs
-            tws_ids = tws_inputs
-        else:
-            text_inputs, text_mask_labels = model_utils.mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids, text_ids)
-            twv_ids, visual_mask_labels = model_utils.mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
-            tws_ids, speech_mask_labels = model_utils.mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
+        text_inputs, text_mask_labels = model_utils.mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids, text_ids)
+        twv_ids, visual_mask_labels = model_utils.mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
+        tws_ids, speech_mask_labels = model_utils.mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
 
         #Make tensor cpu to cuda
         # text_inputs = text_inputs.to(DEVICE)

@@ -29,13 +29,13 @@ parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-
 parser.add_argument("--learning_rate",type=float,default=5*1e-5)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=200)
-parser.add_argument("--train_batch_size",type=int,default=10)
-parser.add_argument("--val_batch_size",type=int,default=4)
+parser.add_argument("--train_batch_size",type=int,default=16)
+parser.add_argument("--val_batch_size",type=int,default=8)
 parser.add_argument("--test_batch_size",type=int,default=1)
 parser.add_argument("--gradient_accumulation_step",type=int,default=1)
 parser.add_argument("--mlm",type=bool,default=True)
-parser.add_argument("--mlm_probability",type=float,default = 0.25)
-parser.add_argument("--max_seq_length",type=int, default = 100)
+parser.add_argument("--mlm_probability",type=float,default = 0.2)
+parser.add_argument("--max_seq_length",type=int, default = 50)
 
 args = parser.parse_args()
 
@@ -75,7 +75,7 @@ def prepareForTraining(numTrainOptimizationSteps):
             "params" : [
                 p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
             ],
-            "weight_decay": 0.20,
+            "weight_decay": 0.2,
         },
         {
             "params" : [
