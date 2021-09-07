@@ -45,19 +45,10 @@ def train_epoch(args, model, traindata, optimizer, scheduler, tokenizer):
         tws_ids, speech_ids, speech_label,speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
         twv_attention_mask, tws_attention_mask = batch[17], batch[18]
 
-        # text_ids = text_ids.to(DEVICE)
-        # twv_ids = twv_ids.to(DEVICE)
-        # tws_ids = tws_ids.to(DEVICE)
-
         #if args.mlm is true, do masking.
         text_inputs, text_mask_labels = model_utils.mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids, text_ids)
         twv_ids, visual_mask_labels = model_utils.mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
         tws_ids, speech_mask_labels = model_utils.mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
-
-        #Make tensor cpu to cuda
-        # text_inputs = text_inputs.to(DEVICE)
-        # text_mask_labels = text_mask_labels.to(DEVICE)
-        # text_label = text_label.to(DEVICE)
 
         visual_inputs = visual_ids.to(DEVICE)
         # #visual_mask_labels = visual_mask_labels.to(DEVICE)
@@ -68,19 +59,6 @@ def train_epoch(args, model, traindata, optimizer, scheduler, tokenizer):
         #speech_mask_labels = speech_mask_labels.to(DEVICE)
         speech_mask_labels = torch.cat((speech_mask_labels, speech_mask_labels),dim=-1).to(DEVICE)
         # speech_label = speech_label.to(DEVICE)
-
-        # text_token_type_ids = text_token_type_ids.to(DEVICE)
-        # visual_token_type_ids = visual_token_type_ids.to(DEVICE)
-        # speech_token_type_ids = speech_token_type_ids.to(DEVICE)
-
-        # text_attention_masks = text_attention_masks.to(DEVICE)
-
-        # text_sentiment = text_sentiment.to(DEVICE)
-        # visual_sentiment = visual_sentiment.to(DEVICE)
-        # speech_sentiment = speech_sentiment.to(DEVICE)
-
-        # twv_ids = twv_ids.to(DEVICE)
-        # tws_ids = tws_ids.to(DEVICE)
 
         visual_attention_masks = (twv_attention_mask, visual_attention_masks)
         speech_attention_masks = (tws_attention_mask, speech_attention_masks)
