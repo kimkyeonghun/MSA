@@ -1,3 +1,5 @@
 colorama
 transformers==2.8.0
 sentencepiece==0.1.91
+sklearn
+statsmodels

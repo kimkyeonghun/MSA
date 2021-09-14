@@ -56,8 +56,6 @@ class MMBertDataset(Dataset):
         elif self.dataset == 'mosei' or self.dataset == 'iemocap':
             self.VISUALDIM = MOSEIVISUALDIM
             self.SPEECHDIM = CMUSPEECHDIM
-        elif self.dataset == 'meld':
-            self.VISUALDIM = MELDVISUALDIM
         elif self.dataset == 'ur_funny':
             self.VISUALDIM = FUNNYVISUALDIM
             self.SPEECHDIM = FUNNYSPEECHDIM
@@ -92,12 +90,6 @@ class MMBertDataset(Dataset):
                 return torch.tensor(sentiment)
             elif mode == '1':
                 return torch.tensor(sentiment)/3
-        elif self.dataset == 'iemocap':
-            if mode == '2':
-                return torch.argmax(torch.argmax(torch.tensor(sentiment),dim=-1))
-        elif self.dataset == 'meld':
-            if mode == '3':
-                return torch.tensor(np.where(np.array(sentiment)==1)[0]) 
         elif self.dataset == 'ur_funny':
             if mode == '2':
                 if sentiment ==1:
@@ -136,10 +128,8 @@ class MMBertDataset(Dataset):
         
         if mode == 'visual':
             pairIndex = 1
-            pairDim = self.VISUALDIM
         elif mode == 'speech':
             pairIndex = 2
-            pairDim = self.SPEECHDIM
             
         assert pairIndex != -1
 
@@ -154,7 +144,7 @@ class MMBertDataset(Dataset):
         if not edgeCase:
             r = random.uniform(0,1)
             
-            if r > 0.2:
+            if r > 0.5:
                 firstIndex = i
                 secondIndex = i
                 label = 1
