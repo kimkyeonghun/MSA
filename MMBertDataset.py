@@ -98,7 +98,7 @@ class MMBertDataset(Dataset):
                     return torch.tensor([0])
 
 
-    def create_concat_joint_sentence(self, i, mode, max_token_len = -1):
+    def create_concat_joint_sentence(self, i, mode):
         """
         If mode is 'visual', pairIndex = 1, elif mode is 'speech', pairIndex = 2
 
@@ -167,7 +167,7 @@ class MMBertDataset(Dataset):
             torch.tensor(pairTokenTypeIds,device=cudas))
         ), sentiment
 
-    def create_text_sentence(self, i, max_token_len = -1):
+    def create_text_sentence(self, i):
         """
         To be..
         """
@@ -176,9 +176,6 @@ class MMBertDataset(Dataset):
         label = 0
         
         firstTokenTypeIds =  np.zeros(len(firstSentence))
-
-        CLS = self.tokenizer.cls_token_id
-        SEP = self.tokenizer.sep_token_id
         
         return torch.tensor(firstSentence), torch.tensor(label,dtype=torch.int64,device=cudas),\
         torch.tensor(firstTokenTypeIds,device=cudas),sentiment,self.items[i][-1]
@@ -196,9 +193,9 @@ class MMBertDataset(Dataset):
         return self.total_item
     
     def __getitem__(self,i):
-        text_sentence, text_label, text_token_type_ids, text_sentiment, rawData = self.create_text_sentence(i,max_token_len=75)
-        text_sentence2,visual_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment = self.create_concat_joint_sentence(i,'visual',max_token_len = -1)
-        text_sentence3,speech_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment = self.create_concat_joint_sentence(i,'speech',max_token_len = -1)
+        text_sentence, text_label, text_token_type_ids, text_sentiment, rawData = self.create_text_sentence(i)
+        text_sentence2,visual_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment = self.create_concat_joint_sentence(i,'visual')
+        text_sentence3,speech_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment = self.create_concat_joint_sentence(i,'speech')
 
         return text_sentence, text_label, text_token_type_ids, text_sentiment,\
          text_sentence2, visual_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment,\

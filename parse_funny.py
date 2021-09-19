@@ -23,7 +23,6 @@ def parse_UR_FUNNY():
     word_aligned_openface_sdk = load_pickle(DATA_PATH + "/openface_features_sdk.pkl")
     word_aligned_covarep_sdk = load_pickle(DATA_PATH + "/covarep_features_sdk.pkl")
     word_embedding_idx_sdk=load_pickle(DATA_PATH + "/language_sdk.pkl")
-    word_list_sdk = load_pickle(DATA_PATH + "/word_list.pkl")
     humor_label_sdk = load_pickle(DATA_PATH + '/humor_label_sdk.pkl')
 
     EPS = 1e-6

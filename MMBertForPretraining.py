@@ -317,10 +317,13 @@ class MMBertForPretraining(BertForPreTraining):
         self.num_labels = config._num_labels
         self.GRUClaassifier = nn.GRU(config.hidden_size,config.hidden_size,batch_first=True)
         self.classifier1_1 = nn.Linear(config.hidden_size*3,config.hidden_size*1)
+        self.classifier2_1 = nn.Linear(config.hidden_size*2,config.hidden_size*1)
         if self.num_labels == 7:
             self.classifier1_2 = nn.Linear(config.hidden_size*1, 1)
+            self.classifier2_2 = nn.Linear(config.hidden_size*1,1)
         else:
             self.classifier1_2 = nn.Linear(config.hidden_size*1,self.num_labels)
+            self.classifier2_2 = nn.Linear(config.hidden_size*1,self.num_labels)
         self.attn = nn.Linear(config.hidden_size*2,config.hidden_size*1)
         self.classifier3 = nn.Linear(config.hidden_size*3,1)
         self.classifier3_1 = nn.Linear(config.hidden_size*1,self.num_labels)
@@ -438,20 +441,49 @@ class MMBertForPretraining(BertForPreTraining):
         #     mlm_loss = (text_loss + visual_loss + speech_loss)/3.0
 
         if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is not None:
-            text_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
-            visual_pooled_score = self.v(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
-            speech_pooled_score = self.v(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
+            text_pooled_score = self.softmax(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
+            visual_pooled_score = self.softmax(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
+            speech_pooled_score = self.softmax(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
             text_pooled_output = (text_pooled_output * text_pooled_score)
             visual_pooled_output = (visual_pooled_output *visual_pooled_score)
             speech_pooled_output = (speech_pooled_output * speech_pooled_score)
             pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
-            #pooled_output = torch.stack((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
-            # self.GRUClaassifier.flatten_parameters()
-            # output, _ = self.GRUClaassifier(pooled_output)
-            # output = output.reshape(output.shape[0],-1)
             temp = self.classifier1_1(pooled_output)
             logits = self.classifier1_2(temp)
             mlm_loss = (text_loss + visual_loss + speech_loss)/3.0
+
+
+        if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is None:
+            text_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
+            visual_pooled_score = self.v(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
+            text_pooled_output = (text_pooled_output * text_pooled_score)
+            visual_pooled_output = (visual_pooled_output *visual_pooled_score)
+            pooled_output = torch.cat((text_pooled_output,visual_pooled_output),dim=1)
+            temp = self.classifier2_1(pooled_output)
+            logits = self.classifier2_2(temp)
+            mlm_loss = (text_loss + visual_loss)/2.0
+
+        
+        if text_pooled_output is not None and visual_pooled_output is None and speech_pooled_output is not None:
+            text_pooled_score = self.softmax(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
+            speech_pooled_score = self.softmax(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
+            text_pooled_output = (text_pooled_output * text_pooled_score)
+            speech_pooled_output = (speech_pooled_output * speech_pooled_score)
+            pooled_output = torch.cat((text_pooled_output,speech_pooled_output),dim=1)
+            temp = self.classifier2_1(pooled_output)
+            logits = self.classifier2_2(temp)
+            mlm_loss = (text_loss + speech_loss)/2.0
+
+        
+        if text_pooled_output is None and visual_pooled_output is not None and speech_pooled_output is not None:
+            visual_pooled_score = self.softmax(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
+            speech_pooled_score = self.softmax(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
+            visual_pooled_output = (visual_pooled_output *visual_pooled_score)
+            speech_pooled_output = (speech_pooled_output * speech_pooled_score)
+            pooled_output = torch.cat((visual_pooled_output,speech_pooled_output),dim=1)
+            temp = self.classifier2_1(pooled_output)
+            logits = self.classifier2_2(temp)
+            mlm_loss = (visual_loss + speech_loss)/2.0
 
         if text_sentiment is not None:
             if self.num_labels == 1 or self.num_labels == 7:

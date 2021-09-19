@@ -85,8 +85,6 @@ def MISA(test_truth,test_preds):
     mult_a7 = multiclass_acc(test_preds_a7, test_truth_a7)
     my_a7 = ACC7(test_preds, test_truth)
     
-    f_score = f1_score((test_preds[non_zeros] > 0), (test_truth[non_zeros] > 0), average='weighted')
-    
     # pos - neg
     binary_truth = (test_truth[non_zeros] > 0)
     binary_preds = (test_preds[non_zeros] > 0)
