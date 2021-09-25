@@ -78,10 +78,11 @@ def collate(examples):
     speech_label = [None]*len(examples)
     speech_type_ids = [None]*len(examples)
     speech_sentiment = [None] * len(examples)
+    segments = [None] * len(examples)
     rawData = [None] * len(examples)
 
     # make examples to each list.
-    for i, (te,tl,tti,ts,twv,ve,vl,vti,vs,tws,se,sl,sti,ss,raw) in enumerate(examples):
+    for i, (te,tl,tti,ts,twv,ve,vl,vti,vs,tws,se,sl,sti,ss,seg,raw) in enumerate(examples):
         text_examples[i] = te
         visual_examples[i] = ve
         speech_examples[i] = se
@@ -101,6 +102,7 @@ def collate(examples):
         text_sentiment[i] = ts
         visual_sentiment[i] = vs
         speech_sentiment[i] = ss
+        segments[i] = seg
         rawData[i] = raw
     if text_sentiment[0].dtype==torch.int64:
         text_sentiment = torch.tensor(text_sentiment,dtype = torch.long)
@@ -137,5 +139,5 @@ def collate(examples):
     return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask, text_sentiment,\
     torch.tensor(tWv_examples), torch.tensor(visual_examples), torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0), visual_attention_mask, visual_sentiment,\
     torch.tensor(tWs_examples), torch.tensor(speech_examples), torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0), speech_attention_mask, speech_sentiment,\
-    visualWithtext_attention_mask, speechWithtext_attention_mask, rawData
+    visualWithtext_attention_mask, speechWithtext_attention_mask, segments, rawData
         

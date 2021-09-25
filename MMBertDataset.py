@@ -178,7 +178,7 @@ class MMBertDataset(Dataset):
         firstTokenTypeIds =  np.zeros(len(firstSentence))
         
         return torch.tensor(firstSentence), torch.tensor(label,dtype=torch.int64,device=cudas),\
-        torch.tensor(firstTokenTypeIds,device=cudas),sentiment,self.items[i][-1]
+        torch.tensor(firstTokenTypeIds,device=cudas),sentiment, self.items[i][-2], self.items[i][-1]
 
     def count(self):
         """
@@ -193,11 +193,11 @@ class MMBertDataset(Dataset):
         return self.total_item
     
     def __getitem__(self,i):
-        text_sentence, text_label, text_token_type_ids, text_sentiment, rawData = self.create_text_sentence(i)
+        text_sentence, text_label, text_token_type_ids, text_sentiment, segment, rawData = self.create_text_sentence(i)
         text_sentence2,visual_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment = self.create_concat_joint_sentence(i,'visual')
         text_sentence3,speech_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment = self.create_concat_joint_sentence(i,'speech')
 
         return text_sentence, text_label, text_token_type_ids, text_sentiment,\
          text_sentence2, visual_sentence, tAv_label, tAv_token_type_ids, tAv_sentiment,\
          text_sentence3, speech_sentence, tAs_label, tAs_token_type_ids, tAs_sentiment,\
-         rawData
+         segment, rawData
