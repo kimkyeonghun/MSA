@@ -1,3 +1,4 @@
+from re import L
 from typing import List, Tuple
 
 import torch
@@ -306,17 +307,11 @@ class MMBertForPretraining(BertForPreTraining):
         self.bert = MMBertModel(config)
         self.num_labels = config._num_labels
         self.classifier1_1 = nn.Linear(config.hidden_size*3,config.hidden_size*1)
-        self.classifier2_1 = nn.Linear(config.hidden_size*2,config.hidden_size*1)
         if self.num_labels == 7:
             self.classifier1_2 = nn.Linear(config.hidden_size*1, 1)
-            self.classifier2_2 = nn.Linear(config.hidden_size*1, 1)
         else:
             self.classifier1_2 = nn.Linear(config.hidden_size*1,self.num_labels)
-            self.classifier2_2 = nn.Linear(config.hidden_size*1,self.num_labels)
         self.attn = nn.Linear(config.hidden_size*2,config.hidden_size*1)
-        self.classifier3 = nn.Linear(config.hidden_size*3,1)
-        self.classifier3_1 = nn.Linear(config.hidden_size*1,self.num_labels)
-        self.classifier3_2 = nn.Linear(config.hidden_size*1,self.num_labels)
         self.relu = nn.ReLU()
         self.v = nn.Linear(config.hidden_size, 1)
         self.tanh = nn.Tanh()
@@ -338,65 +333,43 @@ class MMBertForPretraining(BertForPreTraining):
         
         sequence_output, pooled_output = outputs[:2]
         return self.cls(sequence_output,pooled_output,joint), pooled_output
+
+    def get_outputs(self, input_ids, attention_mask, token_type_ids, masked_lm_labels, next_sentence_label, joint=False):
+        if input_ids is not None:
+            (prediction_scores, relationship_score), pooled_output = self.get_bert_output(
+                input_ids = input_ids,
+                attention_mask = attention_mask,
+                token_type_ids = token_type_ids,
+                joint = joint
+            )
+            self.outputs += (prediction_scores, relationship_score)
+
+            total_loss = 0.0
+
+            loss_fct = torch.nn.CrossEntropyLoss()
+            if masked_lm_labels is not None:
+                masked_lm_loss = loss_fct(prediction_scores.view(-1,self.config.vocab_size), masked_lm_labels.view(-1))
+                total_loss += masked_lm_loss
+
+            if next_sentence_label is not None:
+                next_sentence_loss = loss_fct(relationship_score.view(-1,2),next_sentence_label.view(-1))
+                total_loss += next_sentence_loss
+
+        return total_loss, pooled_output
     
-    def forward(self,
-                inputs, token_type_ids, attention_mask, masked_labels, ap_label, text_sentiment):
-        outputs = ()
+    def forward(self, input_ids, token_type_ids, attention_mask, masked_labels, ap_label, sentiment):
+        self.outputs = ()
         text_loss, visual_loss, speech_loss = None, None, None
         text_pooled_output, visual_pooled_output, speech_pooled_output = None, None, None
-        text_input_ids, visual_input_ids, speech_input_ids, text_with_visual_ids, text_with_speech_ids = inputs
+        text_input_ids, visual_input_ids, speech_input_ids, text_with_visual_ids, text_with_speech_ids = input_ids
         text_token_type_ids, visual_token_type_ids, speech_token_type_ids = token_type_ids
         text_attention_mask, visual_attention_mask, speech_attention_mask = attention_mask
         text_masked_lm_labels, visual_masked_lm_labels, speech_masked_lm_labels = masked_labels
         visual_next_sentence_label, speech_next_sentence_label = ap_label
 
-        if text_input_ids is not None:
-            (text_prediction_scores, text_seq_relationship_score), text_pooled_output = self.get_bert_output(
-                input_ids = text_input_ids,
-                attention_mask = text_attention_mask,
-                token_type_ids = text_token_type_ids,
-            )
-            
-            outputs += (text_prediction_scores, text_seq_relationship_score)
-            
-            if text_masked_lm_labels is not None:
-                loss_fct = torch.nn.CrossEntropyLoss()
-                masked_lm_loss = loss_fct(text_prediction_scores.view(-1,self.config.vocab_size),text_masked_lm_labels.view(-1))
-                total_loss = masked_lm_loss
-                text_loss = total_loss
-                
-        if visual_input_ids is not None:
-            (visual_prediction_scores, visual_seq_relationship_score), visual_pooled_output = self.get_bert_output(
-                input_ids = (text_with_visual_ids,visual_input_ids),
-                attention_mask = visual_attention_mask,
-                token_type_ids = visual_token_type_ids,
-                joint = True,
-            )
-            
-            outputs += (visual_prediction_scores, visual_seq_relationship_score)
-            if visual_masked_lm_labels is not None and visual_next_sentence_label is not None:
-                loss_fct = torch.nn.CrossEntropyLoss()
-                masked_lm_loss = loss_fct(visual_prediction_scores.view(-1,self.config.vocab_size),visual_masked_lm_labels.view(-1).long())
-                next_sentence_loss = loss_fct(visual_seq_relationship_score.view(-1,2), visual_next_sentence_label.view(-1))
-                total_loss = masked_lm_loss + next_sentence_loss
-                visual_loss = total_loss
-        
-        if speech_input_ids is not None:
-            (speech_prediction_scores, speech_seq_relationship_score), speech_pooled_output = self.get_bert_output(
-                input_ids = (text_with_speech_ids, speech_input_ids),
-                attention_mask = speech_attention_mask,
-                token_type_ids = speech_token_type_ids,
-                joint = True,
-            )
-            
-            outputs += (speech_prediction_scores, speech_seq_relationship_score)
-            
-            if speech_masked_lm_labels is not None and speech_next_sentence_label is not None:
-                loss_fct = torch.nn.CrossEntropyLoss()
-                masked_lm_loss = loss_fct(speech_prediction_scores.view(-1,self.config.vocab_size), speech_masked_lm_labels.view(-1).long())
-                next_sentence_loss = loss_fct(speech_seq_relationship_score.view(-1,2),speech_next_sentence_label.view(-1))
-                total_loss = masked_lm_loss+next_sentence_loss
-                speech_loss = total_loss
+        text_loss, text_pooled_output = self.get_outputs(text_input_ids, text_attention_mask, text_token_type_ids, text_masked_lm_labels, None, False)
+        visual_loss, visual_pooled_output = self.get_outputs((text_with_visual_ids, visual_input_ids), visual_attention_mask, visual_token_type_ids, visual_masked_lm_labels, visual_next_sentence_label, True)
+        speech_loss, speech_pooled_output = self.get_outputs((text_with_speech_ids, speech_input_ids), speech_attention_mask, speech_token_type_ids, speech_masked_lm_labels, speech_next_sentence_label, True)
 
         if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is not None:
             text_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
@@ -410,55 +383,22 @@ class MMBertForPretraining(BertForPreTraining):
             logits = self.classifier1_2(temp)
             mlm_loss = (text_loss + visual_loss + speech_loss)/3.0
 
-
-        if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is None:
-            text_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
-            visual_pooled_score = self.v(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
-            text_pooled_output = (text_pooled_output * text_pooled_score)
-            visual_pooled_output = (visual_pooled_output *visual_pooled_score)
-            pooled_output = torch.cat((text_pooled_output,visual_pooled_output),dim=1)
-            temp = self.classifier2_1(pooled_output)
-            logits = self.classifier2_2(temp)
-            mlm_loss = (text_loss + visual_loss)/2.0
-
-        
-        if text_pooled_output is not None and visual_pooled_output is None and speech_pooled_output is not None:
-            text_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
-            speech_pooled_score = self.v(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
-            text_pooled_output = (text_pooled_output * text_pooled_score)
-            speech_pooled_output = (speech_pooled_output * speech_pooled_score)
-            pooled_output = torch.cat((text_pooled_output,speech_pooled_output),dim=1)
-            temp = self.classifier2_1(pooled_output)
-            logits = self.classifier2_2(temp)
-            mlm_loss = (text_loss + speech_loss)/2.0
-
-        
-        if text_pooled_output is None and visual_pooled_output is not None and speech_pooled_output is not None:
-            visual_pooled_score = self.v(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
-            speech_pooled_score = self.v(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
-            visual_pooled_output = (visual_pooled_output * visual_pooled_score)
-            speech_pooled_output = (speech_pooled_output * speech_pooled_score)
-            pooled_output = torch.cat((visual_pooled_output,speech_pooled_output),dim=1)
-            temp = self.classifier2_1(pooled_output)
-            logits = self.classifier2_2(temp)
-            mlm_loss = (visual_loss + speech_loss)/2.0
-
-        if text_sentiment is not None:
+        if sentiment is not None:
             if self.num_labels == 1 or self.num_labels == 7:
                 #  We are doing regression
                 loss_fct = torch.nn.MSELoss()
                 if self.num_labels == 1:
                     logits = self.tanh(logits)
-                label_loss = loss_fct(logits.view(-1), text_sentiment.view(-1))
+                label_loss = loss_fct(logits.view(-1), sentiment.view(-1))
             else:
                 loss_fct = torch.nn.CrossEntropyLoss()
                 label_loss = loss_fct(
-                    logits, text_sentiment
+                    logits, sentiment
                     )
                 logits = torch.argmax(self.sigmoid(logits),dim=1)
 
         joint_loss = mlm_loss + label_loss
-        outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + outputs
+        self.outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + self.outputs
         #outputs = None
 
-        return outputs,logits
+        return self.outputs, logits

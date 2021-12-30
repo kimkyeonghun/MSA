@@ -39,17 +39,12 @@ def train_epoch(args, model, traindata, optimizer, scheduler, tokenizer):
     nb_tr_steps = 0
     model.train()
     for step, batch in enumerate(tqdm(trainDataloader,desc="Iteration")):
-        batch = tuple(t.to(DEVICE) for t in batch[:-2])
-        text_batch, visual_batch, speech_batch, attention_batch, _, _  = batch[0]
-        # text_ids, _, text_token_type_ids, text_attention_masks, text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
-        # twv_ids, visual_ids, visual_label, visual_token_type_ids, visual_attention_masks, _ = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
-        # tws_ids, speech_ids, speech_label, speech_token_type_ids, speech_attention_masks, _ = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
-        # twv_attention_mask, tws_attention_mask = batch[17], batch[18]
+        text_batch, visual_batch, speech_batch, attention_batch, _, _  = batch
 
         #if args.mlm is true, do masking.
-        text_inputs, text_mask_labels = model_utils.mask_tokens(text_batch[0],tokenizer,args) if args.mlm else (text_batch[0], text_batch[0])
-        twv_ids, visual_mask_labels = model_utils.mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
-        tws_ids, speech_mask_labels = model_utils.mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
+        text_inputs, text_mask_labels = model_utils.mask_tokens(text_batch[0], tokenizer, args) if args.mlm else (text_batch[0], text_batch[0])
+        twv_ids, visual_mask_labels = model_utils.mask_tokens(visual_batch[0], tokenizer, args) if args.mlm else (visual_batch[0], visual_batch[0])
+        tws_ids, speech_mask_labels = model_utils.mask_tokens(speech_batch[0], tokenizer, args) if args.mlm else (speech_batch[0], speech_batch[0])
 
         visual_inputs = visual_batch[1].to(DEVICE)
         visual_mask_labels = torch.cat((visual_mask_labels, visual_mask_labels),dim=-1).to(DEVICE)
@@ -57,16 +52,16 @@ def train_epoch(args, model, traindata, optimizer, scheduler, tokenizer):
         speech_inputs = speech_batch[1].to(DEVICE)
         speech_mask_labels = torch.cat((speech_mask_labels, speech_mask_labels),dim=-1).to(DEVICE)
 
-        visual_attention_masks = (attention_batch[0], visual_batch[4])
-        speech_attention_masks = (attention_batch[1], speech_batch[4])
+        visual_attention_masks = (attention_batch[0].to(DEVICE), visual_batch[4].to(DEVICE))
+        speech_attention_masks = (attention_batch[1].to(DEVICE), speech_batch[4].to(DEVICE))
 
         #get outputs using model(MMbertForpretraining)
 
-        inputs = (text_inputs, visual_inputs, speech_inputs, twv_ids, tws_ids)
-        token_types = (text_batch[2], visual_batch[3], speech_batch[3])
-        attention = (text_batch[3], visual_attention_masks, speech_attention_masks)
-        mmlm_label = (text_mask_labels, visual_mask_labels, speech_mask_labels)
-        ap_label = (visual_batch[2], speech_batch[2])
+        inputs = (text_inputs.to(DEVICE), visual_inputs, speech_inputs, twv_ids.to(DEVICE), tws_ids.to(DEVICE))
+        token_types = (text_batch[2].to(DEVICE), visual_batch[3].to(DEVICE), speech_batch[3].to(DEVICE))
+        attention = (text_batch[3].to(DEVICE), visual_attention_masks, speech_attention_masks)
+        mmlm_label = (text_mask_labels.to(DEVICE), visual_mask_labels, speech_mask_labels)
+        ap_label = (visual_batch[2].to(DEVICE), speech_batch[2].to(DEVICE))
 
         outputs, _  = model(
             input_ids = inputs,
@@ -74,28 +69,9 @@ def train_epoch(args, model, traindata, optimizer, scheduler, tokenizer):
             attention_mask = attention,
             masked_labels = mmlm_label,
             ap_label = ap_label,
-            sentiment = text_batch[-1],
+            sentiment = text_batch[-1].to(DEVICE),
         )
-        # outputs, _ = model(
-        #     text_input_ids = text_inputs,
-        #     visual_input_ids = visual_inputs,
-        #     speech_input_ids = speech_inputs,
-        #     text_with_visual_ids = twv_ids,
-        #     text_with_speech_ids = tws_ids,
-        #     text_token_type_ids = text_token_type_ids,
-        #     visual_token_type_ids = visual_token_type_ids,
-        #     speech_token_type_ids = speech_token_type_ids,
-        #     text_attention_mask = text_attention_masks,
-        #     visual_attention_mask = visual_attention_masks,
-        #     speech_attention_mask = speech_attention_masks,
-        #     text_masked_lm_labels = text_mask_labels,
-        #     visual_masked_lm_labels = visual_mask_labels,
-        #     speech_masked_lm_labels = speech_mask_labels,
-        #     visual_next_sentence_label = visual_label,
-        #     speech_next_sentence_label = speech_label,
-        #     text_sentiment = text_sentiment,
-        # )
-
+        
         #Need to check
         loss = outputs[0]
         T_loss = outputs[1]
@@ -154,44 +130,38 @@ def eval_epoch(args, model, valDataset, tokenizer):
     labels = []
     with torch.no_grad():
         for _, batch in enumerate(tqdm(valDataloader,desc="Iteration")):
-            batch = tuple(t.to(DEVICE) for t in batch[:-2])
-            text_ids, _, text_token_type_ids, text_attention_masks, text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
-            twv_ids, visual_ids, visual_label, visual_token_type_ids, visual_attention_masks, _ = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
-            tws_ids, speech_ids, speech_label, speech_token_type_ids, speech_attention_masks, _ = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
-            twv_attention_mask, tws_attention_mask = batch[17], batch[18]
+            text_batch, visual_batch, speech_batch, attention_batch, _, _  = batch
+            text_inputs, text_mask_labels = model_utils.mask_tokens(text_batch[0], tokenizer, args) if args.mlm else (text_batch[0], text_batch[0])
+            twv_ids, visual_mask_labels = model_utils.mask_tokens(visual_batch[0], tokenizer, args) if args.mlm else (visual_batch[0], visual_batch[0])
+            tws_ids, speech_mask_labels = model_utils.mask_tokens(speech_batch[0], tokenizer, args) if args.mlm else (speech_batch[0], speech_batch[0])
 
-            text_inputs, text_mask_labels = model_utils.mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids,text_ids)
-            twv_ids, visual_mask_labels = model_utils.mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
-            tws_ids, speech_mask_labels = model_utils.mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
-
+            visual_inputs = visual_batch[1].to(DEVICE)
             visual_mask_labels = torch.cat((visual_mask_labels, visual_mask_labels),dim=-1).to(DEVICE)
+
+            speech_inputs = speech_batch[1].to(DEVICE)
             speech_mask_labels = torch.cat((speech_mask_labels, speech_mask_labels),dim=-1).to(DEVICE)
 
-            visual_attention_masks = (twv_attention_mask, visual_attention_masks)
-            speech_attention_masks = (tws_attention_mask, speech_attention_masks)
+            visual_attention_masks = (attention_batch[0].to(DEVICE), visual_batch[4].to(DEVICE))
+            speech_attention_masks = (attention_batch[1].to(DEVICE), speech_batch[4].to(DEVICE))
 
-            outputs, logits = model(
-                text_input_ids = text_inputs,
-                visual_input_ids = visual_ids,
-                speech_input_ids = speech_ids,
-                text_with_visual_ids = twv_ids,
-                text_with_speech_ids = tws_ids,
-                text_token_type_ids = text_token_type_ids,
-                visual_token_type_ids = visual_token_type_ids,
-                speech_token_type_ids = speech_token_type_ids,
-                text_attention_mask = text_attention_masks,
-                visual_attention_mask = visual_attention_masks,
-                speech_attention_mask = speech_attention_masks,
-                text_masked_lm_labels = text_mask_labels,
-                visual_masked_lm_labels = visual_mask_labels,
-                speech_masked_lm_labels = speech_mask_labels,
-                visual_next_sentence_label = visual_label,
-                speech_next_sentence_label = speech_label,
-                text_sentiment = text_sentiment,
+            #get outputs using model(MMbertForpretraining)
+
+            inputs = (text_inputs.to(DEVICE), visual_inputs, speech_inputs, twv_ids.to(DEVICE), tws_ids.to(DEVICE))
+            token_types = (text_batch[2].to(DEVICE), visual_batch[3].to(DEVICE), speech_batch[3].to(DEVICE))
+            attention = (text_batch[3].to(DEVICE), visual_attention_masks, speech_attention_masks)
+            mmlm_label = (text_mask_labels.to(DEVICE), visual_mask_labels, speech_mask_labels)
+            ap_label = (visual_batch[2].to(DEVICE), speech_batch[2].to(DEVICE))
+
+            outputs, logits  = model(
+                input_ids = inputs,
+                token_type_ids = token_types,
+                attention_mask = attention,
+                masked_labels = mmlm_label,
+                ap_label = ap_label,
+                sentiment = text_batch[-1].to(DEVICE),
             )
-
             logits = logits.detach().cpu().numpy()
-            label_ids = text_sentiment.detach().cpu().numpy()
+            label_ids = text_batch[-1].detach().cpu().numpy()
 
             loss = outputs[0]
             T_loss = outputs[1]
@@ -267,7 +237,6 @@ def train(args, model, train_dataset, val_dataset, test_dataset, optimizer, sche
     model_save_path = utils.make_date_dir("./model_save")
     logger.info("Model save path: {}".format(model_save_path))
 
-    best_loss = float('inf')
     best_acc = 0
     patience = 0
 
@@ -288,6 +257,7 @@ def train(args, model, train_dataset, val_dataset, test_dataset, optimizer, sche
         logger.info("[Val Epoch {}] Joint Loss : {} Text Loss : {} Visual Loss : {} Speech Loss : {} Label Loss : {}".format(epoch+1,valid_loss,text_loss,visual_loss,speech_loss,label_loss))
 
         logger.info("=====================Test======================")
+        valid_loss,text_loss,visual_loss,speech_loss,label_loss,preds,labels = eval_epoch(args, model, test_dataset, tokenizer)
         test_acc,test_mae,test_f_score = test_score(preds,labels)
 
         logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_f_score))
