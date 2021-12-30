@@ -53,7 +53,7 @@ class MMBertDataset(Dataset):
         if self.dataset =='mosi':
             self.VISUALDIM = MOSIVISUALDIM
             self.SPEECHDIM = CMUSPEECHDIM
-        elif self.dataset == 'mosei' or self.dataset == 'iemocap':
+        elif self.dataset == 'mosei':
             self.VISUALDIM = MOSEIVISUALDIM
             self.SPEECHDIM = CMUSPEECHDIM
         elif self.dataset == 'ur_funny':
@@ -155,7 +155,6 @@ class MMBertDataset(Dataset):
                     secondIndex = random.choice(range(len(self.items)))
                 label = 0
         
-        #textSentence = list(self.items[firstIndex][0][0].detach().numpy().squeeze())
         textSentence = list(self.items[firstIndex][0][0])
         pairSentence = self.items[secondIndex][0][pairIndex]
         

@@ -40,113 +40,57 @@ def train_epoch(args, model, traindata, optimizer, scheduler, tokenizer):
     model.train()
     for step, batch in enumerate(tqdm(trainDataloader,desc="Iteration")):
         batch = tuple(t.to(DEVICE) for t in batch[:-2])
-        text_ids, text_label, text_token_type_ids, text_attention_masks,text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
-        twv_ids, visual_ids, visual_label,visual_token_type_ids, visual_attention_masks, visual_sentiment = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
-        tws_ids, speech_ids, speech_label,speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
-        twv_attention_mask, tws_attention_mask = batch[17], batch[18]
+        text_batch, visual_batch, speech_batch, attention_batch, _, _  = batch[0]
+        # text_ids, _, text_token_type_ids, text_attention_masks, text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
+        # twv_ids, visual_ids, visual_label, visual_token_type_ids, visual_attention_masks, _ = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
+        # tws_ids, speech_ids, speech_label, speech_token_type_ids, speech_attention_masks, _ = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
+        # twv_attention_mask, tws_attention_mask = batch[17], batch[18]
 
         #if args.mlm is true, do masking.
-        text_inputs, text_mask_labels = model_utils.mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids, text_ids)
+        text_inputs, text_mask_labels = model_utils.mask_tokens(text_batch[0],tokenizer,args) if args.mlm else (text_batch[0], text_batch[0])
         twv_ids, visual_mask_labels = model_utils.mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
         tws_ids, speech_mask_labels = model_utils.mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
 
-        # text_inputs, text_mask_labels = model_utils.mask_tokens(text_ids,tokenizer,args) if False else (text_ids, text_ids)
-        # twv_ids, visual_mask_labels = model_utils.mask_tokens(twv_ids,tokenizer,args) if False else (twv_ids, twv_ids)
-        # tws_ids, speech_mask_labels = model_utils.mask_tokens(tws_ids,tokenizer,args) if False else (tws_ids, tws_ids)
-
-        visual_inputs = visual_ids.to(DEVICE)
-        # #visual_mask_labels = visual_mask_labels.to(DEVICE)
+        visual_inputs = visual_batch[1].to(DEVICE)
         visual_mask_labels = torch.cat((visual_mask_labels, visual_mask_labels),dim=-1).to(DEVICE)
-        # visual_label = visual_label.to(DEVICE)
 
-        speech_inputs = speech_ids.to(DEVICE)
-        #speech_mask_labels = speech_mask_labels.to(DEVICE)
+        speech_inputs = speech_batch[1].to(DEVICE)
         speech_mask_labels = torch.cat((speech_mask_labels, speech_mask_labels),dim=-1).to(DEVICE)
-        # speech_label = speech_label.to(DEVICE)
 
-        visual_attention_masks = (twv_attention_mask, visual_attention_masks)
-        speech_attention_masks = (tws_attention_mask, speech_attention_masks)
+        visual_attention_masks = (attention_batch[0], visual_batch[4])
+        speech_attention_masks = (attention_batch[1], speech_batch[4])
 
         #get outputs using model(MMbertForpretraining)
-        outputs, _ = model(
-            text_input_ids = text_inputs,
-            visual_input_ids = visual_inputs,
-            speech_input_ids = speech_inputs,
-            text_with_visual_ids = twv_ids,
-            text_with_speech_ids = tws_ids,
-            text_token_type_ids = text_token_type_ids,
-            visual_token_type_ids = visual_token_type_ids,
-            speech_token_type_ids = speech_token_type_ids,
-            text_attention_mask = text_attention_masks,
-            visual_attention_mask = visual_attention_masks,
-            speech_attention_mask = speech_attention_masks,
-            text_masked_lm_labels = text_mask_labels,
-            visual_masked_lm_labels = visual_mask_labels,
-            speech_masked_lm_labels = speech_mask_labels,
-            text_next_sentence_label = None,
-            visual_next_sentence_label = visual_label,
-            speech_next_sentence_label = speech_label,
-            text_sentiment = text_sentiment,
+
+        inputs = (text_inputs, visual_inputs, speech_inputs, twv_ids, tws_ids)
+        token_types = (text_batch[2], visual_batch[3], speech_batch[3])
+        attention = (text_batch[3], visual_attention_masks, speech_attention_masks)
+        mmlm_label = (text_mask_labels, visual_mask_labels, speech_mask_labels)
+        ap_label = (visual_batch[2], speech_batch[2])
+
+        outputs, _  = model(
+            input_ids = inputs,
+            token_type_ids = token_types,
+            attention_mask = attention,
+            masked_labels = mmlm_label,
+            ap_label = ap_label,
+            sentiment = text_batch[-1],
         )
-
         # outputs, _ = model(
         #     text_input_ids = text_inputs,
-        #     visual_input_ids = visual_inputs,
-        #     speech_input_ids = None,
-        #     text_with_visual_ids = twv_ids,
-        #     text_with_speech_ids = None,
-        #     text_token_type_ids = text_token_type_ids,
-        #     visual_token_type_ids = visual_token_type_ids,
-        #     speech_token_type_ids = None,
-        #     text_attention_mask = text_attention_masks,
-        #     visual_attention_mask = visual_attention_masks,
-        #     speech_attention_mask = None,
-        #     text_masked_lm_labels = text_mask_labels,
-        #     visual_masked_lm_labels = visual_mask_labels,
-        #     speech_masked_lm_labels = None,
-        #     text_next_sentence_label = None,
-        #     visual_next_sentence_label = visual_label,
-        #     speech_next_sentence_label = None,
-        #     text_sentiment = text_sentiment,
-        # )
-
-        # outputs, _ = model(
-        #     text_input_ids = text_inputs,
-        #     visual_input_ids = None,
-        #     speech_input_ids = speech_inputs,
-        #     text_with_visual_ids = None,
-        #     text_with_speech_ids = tws_ids,
-        #     text_token_type_ids = text_token_type_ids,
-        #     visual_token_type_ids = None,
-        #     speech_token_type_ids = speech_token_type_ids,
-        #     text_attention_mask = text_attention_masks,
-        #     visual_attention_mask = None,
-        #     speech_attention_mask = speech_attention_masks,
-        #     text_masked_lm_labels = text_mask_labels,
-        #     visual_masked_lm_labels = None,
-        #     speech_masked_lm_labels = speech_mask_labels,
-        #     text_next_sentence_label = None,
-        #     visual_next_sentence_label = None,
-        #     speech_next_sentence_label = speech_label,
-        #     text_sentiment = text_sentiment,
-        # )
-
-        # outputs, _ = model(
-        #     text_input_ids = None,
         #     visual_input_ids = visual_inputs,
         #     speech_input_ids = speech_inputs,
         #     text_with_visual_ids = twv_ids,
         #     text_with_speech_ids = tws_ids,
-        #     text_token_type_ids = None,
+        #     text_token_type_ids = text_token_type_ids,
         #     visual_token_type_ids = visual_token_type_ids,
         #     speech_token_type_ids = speech_token_type_ids,
-        #     text_attention_mask = None,
+        #     text_attention_mask = text_attention_masks,
         #     visual_attention_mask = visual_attention_masks,
         #     speech_attention_mask = speech_attention_masks,
-        #     text_masked_lm_labels = None,
+        #     text_masked_lm_labels = text_mask_labels,
         #     visual_masked_lm_labels = visual_mask_labels,
         #     speech_masked_lm_labels = speech_mask_labels,
-        #     text_next_sentence_label = None,
         #     visual_next_sentence_label = visual_label,
         #     speech_next_sentence_label = speech_label,
         #     text_sentiment = text_sentiment,
@@ -209,19 +153,16 @@ def eval_epoch(args, model, valDataset, tokenizer):
     preds = []
     labels = []
     with torch.no_grad():
-        for step, batch in enumerate(tqdm(valDataloader,desc="Iteration")):
+        for _, batch in enumerate(tqdm(valDataloader,desc="Iteration")):
             batch = tuple(t.to(DEVICE) for t in batch[:-2])
-            text_ids, text_label, text_token_type_ids, text_attention_masks, text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
-            twv_ids, visual_ids, visual_label, visual_token_type_ids, visual_attention_masks, visual_sentiment = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
-            tws_ids, speech_ids, speech_label, speech_token_type_ids, speech_attention_masks, speech_sentiment = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
+            text_ids, _, text_token_type_ids, text_attention_masks, text_sentiment = batch[0], batch[1], batch[2].long(), batch[3], batch[4]
+            twv_ids, visual_ids, visual_label, visual_token_type_ids, visual_attention_masks, _ = batch[5], batch[6], batch[7], batch[8], batch[9], batch[10]
+            tws_ids, speech_ids, speech_label, speech_token_type_ids, speech_attention_masks, _ = batch[11], batch[12], batch[13], batch[14], batch[15], batch[16]
             twv_attention_mask, tws_attention_mask = batch[17], batch[18]
 
             text_inputs, text_mask_labels = model_utils.mask_tokens(text_ids,tokenizer,args) if args.mlm else (text_ids,text_ids)
             twv_ids, visual_mask_labels = model_utils.mask_tokens(twv_ids,tokenizer,args) if args.mlm else (twv_ids, twv_ids)
             tws_ids, speech_mask_labels = model_utils.mask_tokens(tws_ids,tokenizer,args) if args.mlm else (tws_ids, tws_ids)
-
-            # visual_mask_labels = visual_mask_labels.to(DEVICE)
-            # speech_mask_labels = speech_mask_labels.to(DEVICE)
 
             visual_mask_labels = torch.cat((visual_mask_labels, visual_mask_labels),dim=-1).to(DEVICE)
             speech_mask_labels = torch.cat((speech_mask_labels, speech_mask_labels),dim=-1).to(DEVICE)
@@ -244,74 +185,10 @@ def eval_epoch(args, model, valDataset, tokenizer):
                 text_masked_lm_labels = text_mask_labels,
                 visual_masked_lm_labels = visual_mask_labels,
                 speech_masked_lm_labels = speech_mask_labels,
-                text_next_sentence_label = None,
                 visual_next_sentence_label = visual_label,
                 speech_next_sentence_label = speech_label,
                 text_sentiment = text_sentiment,
             )
-
-            # outputs, logits = model(
-            #     text_input_ids = text_inputs,
-            #     visual_input_ids = visual_ids,
-            #     speech_input_ids = None,
-            #     text_with_visual_ids = twv_ids,
-            #     text_with_speech_ids = None,
-            #     text_token_type_ids = text_token_type_ids,
-            #     visual_token_type_ids = visual_token_type_ids,
-            #     speech_token_type_ids = None,
-            #     text_attention_mask = text_attention_masks,
-            #     visual_attention_mask = visual_attention_masks,
-            #     speech_attention_mask = None,
-            #     text_masked_lm_labels = text_mask_labels,
-            #     visual_masked_lm_labels = visual_mask_labels,
-            #     speech_masked_lm_labels = None,
-            #     text_next_sentence_label = None,
-            #     visual_next_sentence_label = visual_label,
-            #     speech_next_sentence_label = None,
-            #     text_sentiment = text_sentiment,
-            # )
-
-            # outputs, logits = model(
-            #     text_input_ids = text_inputs,
-            #     visual_input_ids = None,
-            #     speech_input_ids = speech_ids,
-            #     text_with_visual_ids = None,
-            #     text_with_speech_ids = tws_ids,
-            #     text_token_type_ids = text_token_type_ids,
-            #     visual_token_type_ids = None,
-            #     speech_token_type_ids = speech_token_type_ids,
-            #     text_attention_mask = text_attention_masks,
-            #     visual_attention_mask = None,
-            #     speech_attention_mask = speech_attention_masks,
-            #     text_masked_lm_labels = text_mask_labels,
-            #     visual_masked_lm_labels = None,
-            #     speech_masked_lm_labels = speech_mask_labels,
-            #     text_next_sentence_label = None,
-            #     visual_next_sentence_label = None,
-            #     speech_next_sentence_label = speech_label,
-            #     text_sentiment = text_sentiment,
-            # )
-
-            # outputs, logits = model(
-            #     text_input_ids = None,
-            #     visual_input_ids = visual_inputs,
-            #     speech_input_ids = speech_inputs,
-            #     text_with_visual_ids = twv_ids,
-            #     text_with_speech_ids = tws_ids,
-            #     text_token_type_ids = None,
-            #     visual_token_type_ids = visual_token_type_ids,
-            #     speech_token_type_ids = speech_token_type_ids,
-            #     text_attention_mask = None,
-            #     visual_attention_mask = visual_attention_masks,
-            #     speech_attention_mask = speech_attention_masks,
-            #     text_masked_lm_labels = None,
-            #     visual_masked_lm_labels = visual_mask_labels,
-            #     speech_masked_lm_labels = speech_mask_labels,
-            #     text_next_sentence_label = None,
-            #     visual_next_sentence_label = visual_label,
-            #     speech_next_sentence_label = speech_label,
-            #     text_sentiment = text_sentiment,
-            # )
 
             logits = logits.detach().cpu().numpy()
             label_ids = text_sentiment.detach().cpu().numpy()

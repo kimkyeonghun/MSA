@@ -17,13 +17,11 @@ class MMBertModel(BertPreTrainedModel):
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
 
-        #self.Linear_v = nn.Linear()
-
         self.init_weights()
 
     def set_joint_embeddings(self, dataset):
         self.dataset = dataset
-        self.jointEmbeddings = JointEmbeddings(self.config.hidden_size,0.5, dataset)
+        self.jointEmbeddings = JointEmbeddings(self.config.hidden_size, 0.5, dataset)
 
     def get_input_embeddings(self):
         return self.embeddings.word_embeddings
@@ -220,7 +218,6 @@ class MMBertModel(BertPreTrainedModel):
             input_ids = input_ids[0]
             pair_mask = attention_mask[1].to(input_ids.device)
             attention_mask = attention_mask[0].to(input_ids.device)
-            pair_token_type_ids = token_type_ids
             token_type_ids = torch.zeros(input_ids.size(), device=input_ids.device if input_ids is not None else inputs_embeds.device).long()
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -264,15 +261,9 @@ class MMBertModel(BertPreTrainedModel):
 
         embedding_output = self.embeddings(
                     input_ids=input_ids.long(), position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds)
-        #print("embedding_output",embedding_output.shape)
             
         if joint:
-            embedding_output = self.jointEmbeddings(embedding_output, pair_ids, token_type_ids=token_type_ids)
-
-        # print(embedding_output.shape)
-        # print(extended_attention_mask.shape)
-        # print(len(head_mask))
-        # assert False
+            embedding_output = self.jointEmbeddings(embedding_output, pair_ids)
 
         encoder_outputs =self.encoder(
             embedding_output,
@@ -313,14 +304,12 @@ class MMBertForPretraining(BertForPreTraining):
         super().__init__(config)
         self.cls = MMBertPreTrainingHeads(config)
         self.bert = MMBertModel(config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.num_labels = config._num_labels
-        self.GRUClaassifier = nn.GRU(config.hidden_size,config.hidden_size,batch_first=True)
         self.classifier1_1 = nn.Linear(config.hidden_size*3,config.hidden_size*1)
         self.classifier2_1 = nn.Linear(config.hidden_size*2,config.hidden_size*1)
         if self.num_labels == 7:
             self.classifier1_2 = nn.Linear(config.hidden_size*1, 1)
-            self.classifier2_2 = nn.Linear(config.hidden_size*1,1)
+            self.classifier2_2 = nn.Linear(config.hidden_size*1, 1)
         else:
             self.classifier1_2 = nn.Linear(config.hidden_size*1,self.num_labels)
             self.classifier2_2 = nn.Linear(config.hidden_size*1,self.num_labels)
@@ -331,13 +320,12 @@ class MMBertForPretraining(BertForPreTraining):
         self.relu = nn.ReLU()
         self.v = nn.Linear(config.hidden_size, 1)
         self.tanh = nn.Tanh()
-        self.softmax = nn.Softmax(dim=1)
         self.sigmoid = nn.Sigmoid()
         
         #?
         self.init_weights()
         
-    def get_bert_output(self,input_ids,attention_mask,token_type_ids,joint = False):
+    def get_bert_output(self, input_ids, attention_mask, token_type_ids, joint = False):
         if joint:
             assert isinstance(input_ids,tuple)
         # 수정해야 함
@@ -352,20 +340,16 @@ class MMBertForPretraining(BertForPreTraining):
         return self.cls(sequence_output,pooled_output,joint), pooled_output
     
     def forward(self,
-                text_input_ids = None, visual_input_ids = None, speech_input_ids=None, text_with_visual_ids = None, text_with_speech_ids = None,
-                text_token_type_ids = None, visual_token_type_ids = None, speech_token_type_ids = None,
-                text_attention_mask = None, visual_attention_mask = None, speech_attention_mask = None,
-                text_masked_lm_labels = None, visual_masked_lm_labels = None, speech_masked_lm_labels = None,
-                text_next_sentence_label = None, visual_next_sentence_label = None, speech_next_sentence_label = None,
-                text_sentiment = None,
-               ):
+                inputs, token_type_ids, attention_mask, masked_labels, ap_label, text_sentiment):
         outputs = ()
-        text_loss = None
-        visual_loss = None
-        speech_loss = None
-        text_pooled_output = None 
-        visual_pooled_output = None
-        speech_pooled_output = None
+        text_loss, visual_loss, speech_loss = None, None, None
+        text_pooled_output, visual_pooled_output, speech_pooled_output = None, None, None
+        text_input_ids, visual_input_ids, speech_input_ids, text_with_visual_ids, text_with_speech_ids = inputs
+        text_token_type_ids, visual_token_type_ids, speech_token_type_ids = token_type_ids
+        text_attention_mask, visual_attention_mask, speech_attention_mask = attention_mask
+        text_masked_lm_labels, visual_masked_lm_labels, speech_masked_lm_labels = masked_labels
+        visual_next_sentence_label, speech_next_sentence_label = ap_label
+
         if text_input_ids is not None:
             (text_prediction_scores, text_seq_relationship_score), text_pooled_output = self.get_bert_output(
                 input_ids = text_input_ids,
@@ -414,38 +398,12 @@ class MMBertForPretraining(BertForPreTraining):
                 total_loss = masked_lm_loss+next_sentence_loss
                 speech_loss = total_loss
 
-        # if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is not None:
-        #     #pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=-1)
-        #     pooled_output = torch.stack((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
-        #     self.GRUClaassifier.flatten_parameters()
-        #     output, _ = self.GRUClaassifier(pooled_output)
-        #     output = output.reshape(output.shape[0],-1)
-        #     temp = self.classifier1_1(output)
-        #     logits = self.classifier1_2(temp)
-        #     mlm_loss = (text_loss + visual_loss + speech_loss)/3.0
-
-        # if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is not None:
-        #     visual_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, visual_pooled_output),dim=1))))
-        #     speech_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, speech_pooled_output),dim=1))))
-        #     visual_pooled_output = (visual_pooled_output*visual_pooled_score)
-        #     speech_pooled_output = (speech_pooled_output*speech_pooled_score)
-        #     pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
-        #     #pooled_output = torch.stack((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
-        #     # self.GRUClaassifier.flatten_parameters()
-        #     # output, _ = self.GRUClaassifier(pooled_output)
-        #     # output = output.reshape(output.shape[0],-1)
-        #     temp = self.classifier1_1(pooled_output)
-        #     logits = self.classifier1_2(temp)
-            
-        #     # logits = (logits1 + logits2 + logits3)/3.0
-        #     mlm_loss = (text_loss + visual_loss + speech_loss)/3.0
-
         if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is not None:
-            text_pooled_score = self.softmax(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
-            visual_pooled_score = self.softmax(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
-            speech_pooled_score = self.softmax(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
+            text_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
+            visual_pooled_score = self.v(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
+            speech_pooled_score = self.v(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
             text_pooled_output = (text_pooled_output * text_pooled_score)
-            visual_pooled_output = (visual_pooled_output *visual_pooled_score)
+            visual_pooled_output = (visual_pooled_output * visual_pooled_score)
             speech_pooled_output = (speech_pooled_output * speech_pooled_score)
             pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
             temp = self.classifier1_1(pooled_output)
@@ -465,8 +423,8 @@ class MMBertForPretraining(BertForPreTraining):
 
         
         if text_pooled_output is not None and visual_pooled_output is None and speech_pooled_output is not None:
-            text_pooled_score = self.softmax(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
-            speech_pooled_score = self.softmax(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
+            text_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
+            speech_pooled_score = self.v(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
             text_pooled_output = (text_pooled_output * text_pooled_score)
             speech_pooled_output = (speech_pooled_output * speech_pooled_score)
             pooled_output = torch.cat((text_pooled_output,speech_pooled_output),dim=1)
@@ -476,9 +434,9 @@ class MMBertForPretraining(BertForPreTraining):
 
         
         if text_pooled_output is None and visual_pooled_output is not None and speech_pooled_output is not None:
-            visual_pooled_score = self.softmax(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
-            speech_pooled_score = self.softmax(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
-            visual_pooled_output = (visual_pooled_output *visual_pooled_score)
+            visual_pooled_score = self.v(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
+            speech_pooled_score = self.v(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
+            visual_pooled_output = (visual_pooled_output * visual_pooled_score)
             speech_pooled_output = (speech_pooled_output * speech_pooled_score)
             pooled_output = torch.cat((visual_pooled_output,speech_pooled_output),dim=1)
             temp = self.classifier2_1(pooled_output)
@@ -501,5 +459,6 @@ class MMBertForPretraining(BertForPreTraining):
 
         joint_loss = mlm_loss + label_loss
         outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + outputs
+        #outputs = None
 
         return outputs,logits

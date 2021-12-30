@@ -136,8 +136,11 @@ def collate(examples):
     speechWithtext_attention_mask[(torch.tensor(tWs_examples)==0)]==0
 
     # MSE(text_sentiment - > torch.float), CE (torch.long)
-    return padded_text_ids, torch.tensor(text_label,dtype=torch.int64),pad_example(text_type_ids,padding_value=0),text_attention_mask, text_sentiment,\
-    torch.tensor(tWv_examples), torch.tensor(visual_examples), torch.tensor(visual_label,dtype=torch.int64),pad_example(visual_type_ids,padding_value=0), visual_attention_mask, visual_sentiment,\
-    torch.tensor(tWs_examples), torch.tensor(speech_examples), torch.tensor(speech_label,dtype=torch.int64),pad_example(speech_type_ids,padding_value=0), speech_attention_mask, speech_sentiment,\
-    visualWithtext_attention_mask, speechWithtext_attention_mask, segments, rawData
+    text_batch = padded_text_ids, torch.tensor(text_label,dtype=torch.int64), pad_example(text_type_ids,padding_value=0).long(),text_attention_mask, text_sentiment
+    visual_batch = torch.tensor(tWv_examples), torch.tensor(visual_examples), torch.tensor(visual_label,dtype=torch.int64), pad_example(visual_type_ids,padding_value=0), visual_attention_mask, visual_sentiment
+    speech_batch = torch.tensor(tWs_examples), torch.tensor(speech_examples), torch.tensor(speech_label,dtype=torch.int64), pad_example(speech_type_ids,padding_value=0), speech_attention_mask, speech_sentiment
+    attention_batch = visualWithtext_attention_mask, speechWithtext_attention_mask
+    return text_batch, visual_batch, speech_batch, attention_batch, segments, rawData
+
+    
         

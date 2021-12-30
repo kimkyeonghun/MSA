@@ -26,7 +26,7 @@ parser.add_argument("--dataset",type=str,choices=["mosi", "mosei", "ur_funny"],d
 parser.add_argument("--emotion",type=str,default='sentiment')
 parser.add_argument("--num_labels",type=int,default=1)
 parser.add_argument("--model",type=str,choices=["bert-base-uncased","bert-large-uncased"],default="bert-large-uncased")
-parser.add_argument("--learning_rate",type=float,default=5*1e-4)
+parser.add_argument("--learning_rate",type=float,default=5*1e-5)
 parser.add_argument("--warmup_proportion",type=float,default=1)
 parser.add_argument("--n_epochs",type=int,default=200)
 parser.add_argument("--train_batch_size",type=int,default=16)
@@ -75,7 +75,7 @@ def prepareForTraining(numTrainOptimizationSteps):
             "params" : [
                 p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
             ],
-            "weight_decay": 0.01,
+            "weight_decay": 0.05,
         },
         {
             "params" : [
