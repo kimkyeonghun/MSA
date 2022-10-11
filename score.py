@@ -73,21 +73,21 @@ def multiclass_acc(preds, truths):
     return np.sum(np.round(preds) == np.round(truths)) / float(len(truths))
 
 def MISA(test_truth,test_preds):
-    non_zeros = np.array([i for i, e in enumerate(test_truth) if e != 0])
+    non_zeros = np.array([i for i, e in enumerate(test_truth) if (e != 0)])
 
     test_preds = test_preds.squeeze(-1)
 
     test_preds_a7 = np.clip(test_preds, a_min=-3., a_max=3.)
     test_truth_a7 = np.clip(test_truth, a_min=-3., a_max=3.)
 
-    mae = np.mean(np.absolute(test_preds - test_truth))   # Average L1 distance between preds and truths
-    corr = np.corrcoef(test_preds, test_truth)[0][1]
+    mae = np.mean(np.absolute(test_preds_a7 - test_truth_a7))   # Average L1 distance between preds and truths
+    corr = np.corrcoef(test_preds_a7, test_truth_a7)[0][1]
     mult_a7 = multiclass_acc(test_preds_a7, test_truth_a7)
     my_a7 = ACC7(test_preds, test_truth)
     
     # pos - neg
-    binary_truth = (test_truth[non_zeros] > 0)
-    binary_preds = (test_preds[non_zeros] > 0)
+    binary_truth = (test_preds_a7[non_zeros] > 0)
+    binary_preds = (test_truth_a7[non_zeros] > 0)
 
     tt = sum((binary_preds==1)&(binary_truth==1))
     ft = sum((binary_preds==1)&(binary_truth==0))
@@ -110,8 +110,8 @@ def MISA(test_truth,test_preds):
         print("Accuracy (pos/neg) ", accuracy_score(binary_truth, binary_preds))
     
     # non-neg - neg
-    binary_truth = (test_truth >= 0)
-    binary_preds = (test_preds >= 0)
+    binary_truth = (test_preds_a7 >= 0)
+    binary_preds = (test_truth_a7 >= 0)
 
     if True:
         print("Classification Report (non-neg/neg) :")
@@ -125,8 +125,11 @@ def main():
 
     preds = np.load(os.path.join('numpy_save',args.path,'predict.npy'))
     labels = np.load(os.path.join('numpy_save',args.path,'target.npy'))
-    print(np.unique(np.round(preds)))
-    print(np.unique(np.round(labels)))
+
+    unique_preds=np.unique(np.round(preds))
+    unique_labels=np.unique(np.round(labels))
+    print(unique_preds)
+    print(unique_labels)
 
     MISA(labels,preds)
 if __name__ == '__main__':

@@ -4,6 +4,33 @@ import torch.nn.functional as F
 
 from config import *
 
+class CPC(nn.Module):
+    def __init__(self, x_size, y_size, n_layers=1, activation='Tanh'):
+        super().__init__()
+        self.x_size = x_size
+        self.y_size = y_size
+        self.layers = n_layers
+        self.activation = getattr(nn, activation)
+
+        if n_layers == 1:
+            self.net = nn.Linear(
+                in_features=y_size,
+                out_features=x_size
+            )
+        
+    def forward(self, x, y):
+        x_pred = self.net(y)
+
+        x_pred = x_pred / x_pred.norm(dim=1, keepdim=True)
+        x = x / x.norm(dim=1, keepdim=True)
+
+        pos = torch.sum(x*x_pred, dim=-1)
+        neg = torch.logsumexp(torch.matmul(x, x_pred.t()), dim=-1)
+        
+        nce = -(pos - neg).mean()
+
+        return nce
+
 class JointEmbeddings(nn.Module):
     def __init__(self, hidden_size, dropout_prob, dataset):
         super().__init__()

@@ -1,13 +1,14 @@
 from re import L
 from typing import List, Tuple
+from unicodedata import bidirectional
 
 import torch
 from torch import nn
 
 from transformers import BertForPreTraining
-from transformers.modeling_bert import BertPreTrainingHeads, BertPreTrainedModel, BertEmbeddings, BertEncoder, BertPooler 
+from transformers.models.bert.modeling_bert import BertPreTrainingHeads, BertPreTrainedModel, BertEmbeddings, BertEncoder, BertPooler 
 
-from MMBertEmbedding import JointEmbeddings
+from MMBertEmbedding import JointEmbeddings, CPC
 
 class MMBertModel(BertPreTrainedModel):
     def __init__(self,config):
@@ -305,7 +306,7 @@ class MMBertForPretraining(BertForPreTraining):
         super().__init__(config)
         self.cls = MMBertPreTrainingHeads(config)
         self.bert = MMBertModel(config)
-        self.num_labels = config._num_labels
+        self.num_labels = 7
         self.classifier1_1 = nn.Linear(config.hidden_size*3,config.hidden_size*1)
         if self.num_labels == 7:
             self.classifier1_2 = nn.Linear(config.hidden_size*1, 1)
@@ -313,12 +314,41 @@ class MMBertForPretraining(BertForPreTraining):
             self.classifier1_2 = nn.Linear(config.hidden_size*1,self.num_labels)
         self.attn = nn.Linear(config.hidden_size*2,config.hidden_size*1)
         self.relu = nn.ReLU()
-        self.v = nn.Linear(config.hidden_size, 1)
+        self.vt = nn.Linear(config.hidden_size, 1)
+        self.vs = nn.Linear(config.hidden_size, 1)
+        self.vv = nn.Linear(config.hidden_size, 1)
         self.tanh = nn.Tanh()
         self.sigmoid = nn.Sigmoid()
+        self.dropout = nn.Dropout(0.38)
+
+        self.alpha = 1
+        self.beta = 1
+
+        self.cpc_zt = CPC(
+            x_size = 1024, # to be predicted
+            y_size = config.hidden_size,
+            n_layers = 1,
+            activation = 'Tanh'
+        )
+        self.cpc_zv = CPC(
+            x_size = 1024,
+            y_size = config.hidden_size,
+            n_layers = 1,
+            activation = 'Tanh'
+        )
+        self.cpc_za = CPC(
+            x_size = 1024,
+            y_size = config.hidden_size,
+            n_layers = 1,
+            activation = 'Tanh'
+        )
         
         #?
         self.init_weights()
+    
+    def set_alpha_beta(self, alpha, beta):
+        self.alpha = alpha
+        self.beta = beta
         
     def get_bert_output(self, input_ids, attention_mask, token_type_ids, joint = False):
         if joint:
@@ -345,6 +375,8 @@ class MMBertForPretraining(BertForPreTraining):
             self.outputs += (prediction_scores, relationship_score)
 
             total_loss = 0.0
+            masked_lm_loss = 0
+            next_sentence_loss = 0
 
             loss_fct = torch.nn.CrossEntropyLoss()
             if masked_lm_labels is not None:
@@ -355,7 +387,7 @@ class MMBertForPretraining(BertForPreTraining):
                 next_sentence_loss = loss_fct(relationship_score.view(-1,2),next_sentence_label.view(-1))
                 total_loss += next_sentence_loss
 
-        return total_loss, pooled_output
+        return masked_lm_loss, next_sentence_loss, pooled_output
     
     def forward(self, input_ids, token_type_ids, attention_mask, masked_labels, ap_label, sentiment):
         self.outputs = ()
@@ -367,22 +399,34 @@ class MMBertForPretraining(BertForPreTraining):
         text_masked_lm_labels, visual_masked_lm_labels, speech_masked_lm_labels = masked_labels
         visual_next_sentence_label, speech_next_sentence_label = ap_label
 
-        text_loss, text_pooled_output = self.get_outputs(text_input_ids, text_attention_mask, text_token_type_ids, text_masked_lm_labels, None, False)
-        visual_loss, visual_pooled_output = self.get_outputs((text_with_visual_ids, visual_input_ids), visual_attention_mask, visual_token_type_ids, visual_masked_lm_labels, visual_next_sentence_label, True)
-        speech_loss, speech_pooled_output = self.get_outputs((text_with_speech_ids, speech_input_ids), speech_attention_mask, speech_token_type_ids, speech_masked_lm_labels, speech_next_sentence_label, True)
+        text_mlm_loss, _, text_pooled_output = self.get_outputs(text_input_ids, text_attention_mask, text_token_type_ids, text_masked_lm_labels, None, False)
+        visual_mlm_loss, visual_ap_loss, visual_pooled_output = self.get_outputs((text_with_visual_ids, visual_input_ids), visual_attention_mask, visual_token_type_ids, visual_masked_lm_labels, visual_next_sentence_label, True)
+        speech_mlm_loss, speech_ap_loss, speech_pooled_output = self.get_outputs((text_with_speech_ids, speech_input_ids), speech_attention_mask, speech_token_type_ids, speech_masked_lm_labels, speech_next_sentence_label, True)
 
         if text_pooled_output is not None and visual_pooled_output is not None and speech_pooled_output is not None:
-            text_pooled_score = self.v(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
-            visual_pooled_score = self.v(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
-            speech_pooled_score = self.v(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
-            text_pooled_output = (text_pooled_output * text_pooled_score)
-            visual_pooled_output = (visual_pooled_output * visual_pooled_score)
-            speech_pooled_output = (speech_pooled_output * speech_pooled_score)
-            pooled_output = torch.cat((text_pooled_output,visual_pooled_output,speech_pooled_output),dim=1)
+            text_pooled_score = self.vt(self.relu(self.attn(torch.cat((text_pooled_output, text_pooled_output),dim=1))))
+            visual_pooled_score = self.vv(self.relu(self.attn(torch.cat((visual_pooled_output, visual_pooled_output),dim=1))))
+            speech_pooled_score = self.vs(self.relu(self.attn(torch.cat((speech_pooled_output, speech_pooled_output),dim=1))))
+            text_pooled_output_p = (text_pooled_output * text_pooled_score)
+            visual_pooled_output_p = (visual_pooled_output * visual_pooled_score)
+            speech_pooled_output_p = (speech_pooled_output * speech_pooled_score)
+            pooled_output = torch.cat((text_pooled_output_p,visual_pooled_output_p,speech_pooled_output_p),dim=1)
             temp = self.classifier1_1(pooled_output)
             logits = self.classifier1_2(temp)
-            mlm_loss = (text_loss + visual_loss + speech_loss)/3.0
+            # pooled_output = (text_pooled_output+visual_pooled_output+speech_pooled_output)
+            # logits = self.classifier1_2(pooled_output)
+            # print(temp.shape)
+            # print(text_pooled_output.shape)
+            # print(visual_pooled_output.shape)
+            # print(speech_pooled_output.shape)
+            nce_t = self.cpc_zt(text_pooled_output, temp)
+            nce_v = self.cpc_zv(visual_pooled_output, temp)
+            nce_a = self.cpc_za(speech_pooled_output, temp)
+            nce = nce_t + nce_v + nce_a
 
+        mlm_loss = (text_mlm_loss + visual_mlm_loss + speech_mlm_loss)/3.0
+        ap_loss = (visual_ap_loss + speech_ap_loss)/2.0
+            
         if sentiment is not None:
             if self.num_labels == 1 or self.num_labels == 7:
                 #  We are doing regression
@@ -396,9 +440,10 @@ class MMBertForPretraining(BertForPreTraining):
                     logits, sentiment
                     )
                 logits = torch.argmax(self.sigmoid(logits),dim=1)
-
-        joint_loss = mlm_loss + label_loss
-        self.outputs =  (joint_loss, text_loss, visual_loss, speech_loss, label_loss,) + self.outputs
+        joint_loss = self.alpha*(mlm_loss) + ap_loss + label_loss - self.beta*nce
+        #joint_loss = 0.1*(mlm_loss + ap_loss) + label_loss
+        self.outputs = (joint_loss, text_loss, visual_loss, speech_loss, ap_loss, label_loss, nce) + self.outputs
+        #self.outputs = (joint_loss, text_mlm_loss, visual_mlm_loss, speech_mlm_loss, ap_loss, label_loss ) + self.outputs
         #outputs = None
 
         return self.outputs, logits

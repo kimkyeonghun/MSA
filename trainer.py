@@ -77,7 +77,8 @@ def train_epoch(args, model, traindata, optimizer, scheduler, tokenizer):
         T_loss = outputs[1]
         V_loss = outputs[2]
         S_loss = outputs[3]
-        L_loss = outputs[4]
+        ap_loss= outputs[4]
+        L_loss = outputs[5]
 
         loss.mean().backward()
 
@@ -97,7 +98,7 @@ def train_epoch(args, model, traindata, optimizer, scheduler, tokenizer):
             scheduler.step()
             optimizer.zero_grad()
         
-    return train_loss / nb_tr_steps, text_loss / nb_tr_steps ,visual_loss / nb_tr_steps , speech_loss / nb_tr_steps , label_loss / nb_tr_steps
+    return train_loss / nb_tr_steps, text_loss / nb_tr_steps ,visual_loss / nb_tr_steps , speech_loss / nb_tr_steps , ap_loss / nb_tr_steps, label_loss / nb_tr_steps
 
 def eval_epoch(args, model, valDataset, tokenizer):
     """
@@ -167,7 +168,8 @@ def eval_epoch(args, model, valDataset, tokenizer):
             T_loss = outputs[1]
             V_loss = outputs[2]
             S_loss = outputs[3]
-            L_loss = outputs[4]
+            ap_loss= outputs[4]
+            L_loss = outputs[5]
             #for colab
             #logits = np.expand_dims(logits,axis=-1)
 
@@ -189,7 +191,7 @@ def eval_epoch(args, model, valDataset, tokenizer):
         preds = np.array(preds)
         labels = np.array(labels)           
 
-    return dev_loss / nb_dev_steps, text_loss / nb_dev_steps ,visual_loss / nb_dev_steps , speech_loss / nb_dev_steps , label_loss / nb_dev_steps, preds,labels
+    return dev_loss / nb_dev_steps, text_loss / nb_dev_steps ,visual_loss / nb_dev_steps , speech_loss / nb_dev_steps , ap_loss / nb_dev_steps, label_loss / nb_dev_steps, preds,labels
 
 def test_CE_score_model(preds,y_test):
     """
@@ -237,6 +239,7 @@ def train(args, model, train_dataset, val_dataset, test_dataset, optimizer, sche
     model_save_path = utils.make_date_dir("./model_save")
     logger.info("Model save path: {}".format(model_save_path))
 
+    best_loss = float('inf')
     best_acc = 0
     patience = 0
 
@@ -249,15 +252,15 @@ def train(args, model, train_dataset, val_dataset, test_dataset, optimizer, sche
         patience += 1
 
         logger.info("=====================Train======================")
-        train_loss,text_loss,visual_loss,speech_loss,label_loss = train_epoch(args, model, train_dataset, optimizer, scheduler, tokenizer)
-        logger.info("[Train Epoch {}] Joint Loss : {} Text Loss : {} Visual Loss : {} Speech Loss : {} Label Loss : {}".format(epoch+1,train_loss,text_loss,visual_loss,speech_loss,label_loss))
+        train_loss,text_loss,visual_loss,speech_loss,ap_loss,label_loss = train_epoch(args, model, train_dataset, optimizer, scheduler, tokenizer)
+        logger.info("[Train Epoch {}] Joint Loss : {} AP Loss : {} Text Loss : {} Visual Loss : {} Speech Loss : {} Label Loss : {}".format(epoch+1,train_loss,ap_loss,text_loss,visual_loss,speech_loss,label_loss))
 
         logger.info("=====================Valid======================")
-        valid_loss,text_loss,visual_loss,speech_loss,label_loss,preds,labels = eval_epoch(args, model, val_dataset, tokenizer)
-        logger.info("[Val Epoch {}] Joint Loss : {} Text Loss : {} Visual Loss : {} Speech Loss : {} Label Loss : {}".format(epoch+1,valid_loss,text_loss,visual_loss,speech_loss,label_loss))
+        valid_loss,text_loss,visual_loss,speech_loss,ap_loss,label_loss,preds,labels = eval_epoch(args, model, val_dataset, tokenizer)
+        logger.info("[Val Epoch {}] Joint Loss : {} AP Loss : {} Text Loss : {} Visual Loss : {} Speech Loss : {} Label Loss : {}".format(epoch+1,valid_loss,ap_loss,text_loss,visual_loss,speech_loss,label_loss))
 
         logger.info("=====================Test======================")
-        valid_loss,text_loss,visual_loss,speech_loss,label_loss,preds,labels = eval_epoch(args, model, test_dataset, tokenizer)
+        _, text_loss,visual_loss,speech_loss,_ ,label_loss,preds,labels = eval_epoch(args, model, test_dataset, tokenizer)
         test_acc,test_mae,test_f_score = test_score(preds,labels)
 
         logger.info("[Epoch {}] Test_ACC : {}, Test_MAE : {}, Test_F_Score: {}".format(epoch+1,test_acc,test_mae,test_f_score))
@@ -265,6 +268,7 @@ def train(args, model, train_dataset, val_dataset, test_dataset, optimizer, sche
         if test_acc > best_acc:
             torch.save(model.state_dict(),os.path.join(model_save_path,'model_'+str(epoch+1)+".pt"))
             best_epoch = epoch
+            best_loss = valid_loss
             best_acc = test_acc
             best_mae = test_mae
             best_f_score = test_f_score
@@ -272,7 +276,7 @@ def train(args, model, train_dataset, val_dataset, test_dataset, optimizer, sche
             best_labels = labels
             patience = 0
 
-        if patience == 10:
+        if patience == 25:
             numpy_save_path = utils.make_date_dir("./numpy_save")
             logger.info("Model save path: {}".format(numpy_save_path))
             np.save(os.path.join(numpy_save_path,'predict.npy'),best_preds)
@@ -282,4 +286,5 @@ def train(args, model, train_dataset, val_dataset, test_dataset, optimizer, sche
         val_losses.append(valid_loss)
         test_accuracy.append(test_acc)
 
+    logger.info("\n Alpha: {} Beta: {}".format(args.alpha, args.beta))
     logger.info("\n[Best Epoch {}] Best_ACC : {}, Best_MAE : {}, Best_F_Score: {}".format(best_epoch+1, best_acc, best_mae, best_f_score))
